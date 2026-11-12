@@ -203,6 +203,25 @@ def doctor() -> None:
     console.print("[bold green]Pemeriksaan RUPIKA Doctor selesai. Semua konfigurasi dasar dan invarian valid.[/bold green]")
 
 
+@app.command(name="bot")
+def bot_command(
+    token: Optional[str] = typer.Option(
+        None,
+        "--token",
+        "-t",
+        help="Telegram bot token. Defaults to TELEGRAM_BOT_TOKEN from environment.",
+    ),
+) -> None:
+    """Start Telegram bot long polling service."""
+    from stockforge.bot.service import start_bot
+    console.print("[bold cyan]Menjalankan RUPIKA Telegram Bot service...[/bold cyan]")
+    try:
+        start_bot(token=token)
+    except Exception as e:
+        console.print(f"[bold red]Gagal menjalankan bot:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
 def main() -> None:
     """CLI entry point."""
     app()
