@@ -84,14 +84,26 @@ class MockImageProvider(ImageProvider):
         if self.should_fail:
             raise RuntimeError(f"Simulated failure from {self.provider_name}")
 
-        # Return minimal valid JPEG header bytes
-        dummy_jpeg = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x01\x00`\x00`\x00\x00\xff\xdb"
+        # Return a valid decodable JPEG generated via Pillow
+        import io
+        from PIL import Image
+        call_idx = len(self.calls)
+        r = (60 + call_idx * 17) % 256
+        g = (90 + call_idx * 23) % 256
+        b = (120 + call_idx * 29) % 256
+        img = Image.new("RGB", (width, height), color=(r, g, b))
+        # Ensure distinct bytes by setting varied pixel based on prompt and call index
+        img.putpixel((0, 0), (call_idx % 256, (call_idx * 7) % 256, (call_idx * 13) % 256))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        jpeg_bytes = buf.getvalue()
+
         return ProviderImageResponse(
             request_id=req_id,
             provider=self.provider_name,
             model=model,
             role=RoleType.IMAGE,
-            image_bytes=dummy_jpeg,
+            image_bytes=jpeg_bytes,
             width=width,
             height=height,
             format="JPEG",

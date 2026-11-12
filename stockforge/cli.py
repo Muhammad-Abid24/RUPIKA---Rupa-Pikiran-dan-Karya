@@ -400,6 +400,85 @@ def research_list(
     console.print(table)
 
 
+# Image Generation Command (SF-007)
+@app.command(name="generate")
+def generate_command(
+    prompt: str = typer.Argument(..., help="Prompt deskripsi foto untuk digenerate"),
+    count: int = typer.Option(1, "--count", "-c", help="Jumlah gambar yang digenerate (1-10)"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Lewati dialog konfirmasi biaya"),
+) -> None:
+    """Generate gambar stok komersial dengan verifikasi lisensi dan estimasi biaya (SF-007)."""
+    import asyncio
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.images.service import ImageGenerationService
+    from stockforge.providers.mock import MockImageProvider
+    from stockforge.storage.service import StorageService
+
+    if count < 1 or count > 10:
+        console.print("[bold red]Kesalahan:[/bold red] Jumlah gambar harus berada dalam rentang 1 hingga 10 (batch cap).")
+        raise typer.Exit(code=1)
+
+    settings = get_settings()
+    data_dir = Path(settings.data_dir).resolve()
+    storage = StorageService(data_dir)
+
+    engine = create_db_engine()
+    session_factory = create_session_factory(engine)
+
+    # Inisialisasi service dengan provider mock aman (offline)
+    mock_provider = MockImageProvider(provider_name="mock-image")
+    image_service = ImageGenerationService(
+        session_factory=session_factory,
+        storage_service=storage,
+        image_provider=mock_provider,
+        license_evidence="adobe_stock_commercial_sublicense_v1",
+    )
+
+    estimated_cents = image_service.estimate_max_spend_cents(count)
+    estimated_usd = estimated_cents / 100.0
+
+    console.print(
+        Panel.fit(
+            f"[bold cyan]Konfirmasi Generasi Gambar RUPIKA (SF-007)[/bold cyan]\n\n"
+            f"• Prompt: [italic]{prompt}[/italic]\n"
+            f"• Jumlah batch: [bold]{count}[/bold] file (Batas cap: 10)\n"
+            f"• Estimasi biaya maksimum: [bold green]${estimated_usd:.2f} USD[/bold green] ({estimated_cents} sen)\n"
+            f"• Lisensi komersial: [green]Terverifikasi (Adobe Stock Commercial Sublicense)[/green]",
+            border_style="cyan",
+        )
+    )
+
+    if not yes:
+        confirmed = typer.confirm("Apakah Anda menyetujui estimasi biaya dan ingin melanjutkan generasi?")
+        if not confirmed:
+            console.print("[yellow]Operasi generasi dibatalkan oleh operator.[/yellow]")
+            return
+
+    console.print("[bold green]Memulai proses generasi gambar...[/bold green]")
+    prompts = [prompt] * count
+
+    try:
+        result = asyncio.run(image_service.generate_batch(prompts=prompts, max_batch_size=10))
+    except Exception as e:
+        console.print(f"[bold red]Gagal memproses batch generasi gambar:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Hasil Generasi Gambar Stok", show_header=True)
+    table.add_column("Asset ID", style="cyan", width=10)
+    table.add_column("Filename", style="bold")
+    table.add_column("Dimensi", width=12)
+    table.add_column("SHA-256", style="dim", width=14)
+    table.add_column("Status", style="green", width=10)
+
+    for a in result.successful_assets:
+        table.add_row(str(a.id), a.filename, f"{a.width}x{a.height}", a.sha256[:10] + "...", a.status)
+
+    console.print(table)
+    console.print(f"\n[bold green]✓ Berhasil mengenerate {result.success_count} aset gambar.[/bold green]")
+    if result.failure_count > 0:
+        console.print(f"[bold red]⚠ {result.failure_count} aset gagal digenerate.[/bold red]")
+
+
 def main() -> None:
     """CLI entry point."""
     app()
