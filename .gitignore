@@ -1,0 +1,9 @@
+# Local AI agent files (ignore only if these are private)
+/AGENT.md
+/ARCHITECTURE.md
+/BACKLOG.md
+/KANBAN.md
+/README.md
+/TASK.md
+/docs/
+/.ai/
