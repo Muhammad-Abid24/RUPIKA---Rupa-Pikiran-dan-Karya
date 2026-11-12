@@ -50,3 +50,7 @@ def get_session_factory(engine: Optional[Engine] = None) -> sessionmaker[Session
     eng = engine or create_db_engine()
     return sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
 
+
+# Backward-compatible alias
+create_session_factory = get_session_factory
+

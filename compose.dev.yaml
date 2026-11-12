@@ -1,5 +1,4 @@
 # Development override Compose specification for localhost macOS Docker Desktop (SF-014A)
-name: rupika-dev
 
 services:
   bot:
