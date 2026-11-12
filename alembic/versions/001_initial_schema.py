@@ -516,3 +516,4 @@ def downgrade() -> None:
     op.drop_table("ai_models")
     op.drop_table("ai_providers")
     op.drop_table("telegram_users")
+

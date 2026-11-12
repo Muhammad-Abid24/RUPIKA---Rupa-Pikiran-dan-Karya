@@ -49,3 +49,4 @@ def get_session_factory(engine: Optional[Engine] = None) -> sessionmaker[Session
     """Construct configured sessionmaker bound to engine."""
     eng = engine or create_db_engine()
     return sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
+
