@@ -40,3 +40,4 @@ def compute_concept_fingerprint(niche_name: str, title: str, prompt: str) -> str
 
     canonical_representation = f"niche:{norm_niche}|title:{norm_title}|prompt:{norm_prompt}"
     return hashlib.sha256(canonical_representation.encode("utf-8")).hexdigest()
+
