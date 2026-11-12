@@ -1,0 +1,13 @@
+roles:
+  research: {provider: research, model_env: RESEARCH_MODEL}
+  prompt: {provider: prompt, model_env: PROMPT_MODEL}
+  image: {provider: image, model_env: IMAGE_MODEL}
+  vision_qc: {provider: vision_qc, model_env: VISION_QC_MODEL}
+  metadata: {provider: metadata, model_env: METADATA_MODEL}
+providers:
+  research: {kind: text, base_url_env: RESEARCH_BASE_URL, api_key_env: RESEARCH_API_KEY}
+  prompt: {kind: text, base_url_env: PROMPT_BASE_URL, api_key_env: PROMPT_API_KEY}
+  image: {kind: image, base_url_env: IMAGE_BASE_URL, api_key_env: IMAGE_API_KEY}
+  vision_qc: {kind: vision, base_url_env: VISION_QC_BASE_URL, api_key_env: VISION_QC_API_KEY}
+  metadata: {kind: vision, base_url_env: METADATA_BASE_URL, api_key_env: METADATA_API_KEY}
+

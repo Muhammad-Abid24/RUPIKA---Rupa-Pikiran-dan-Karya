@@ -1,0 +1,16 @@
+research:
+  mode: manual
+  auto:
+    enabled: false
+    schedule: "0 8 * * 1"
+    timezone: Asia/Jakarta
+    max_niches: 5
+  budget:
+    daily_limit_usd: 1.00  # example only; explicit operator approval required for paid auto research
+approval:
+  niche_selection_required: true
+  production_plan_approval_required: true
+  paid_generation_approval_required: true
+  auto_generate: false
+  plan_expiry_minutes: 60
+
