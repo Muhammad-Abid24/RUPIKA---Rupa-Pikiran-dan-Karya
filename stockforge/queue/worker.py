@@ -136,3 +136,4 @@ class Worker:
         """Signal worker to stop after current job finishes."""
         self.is_running = False
         logger.info("Worker %s menerima sinyal penghentian", self.worker_id)
+

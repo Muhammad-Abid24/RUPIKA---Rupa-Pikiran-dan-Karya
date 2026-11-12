@@ -215,3 +215,4 @@ def test_cli_worker_help():
     assert "Start worker daemon" in result.output
     assert "--lease" in result.output
     assert "--interval" in result.output
+
