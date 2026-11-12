@@ -7,3 +7,11 @@
 /TASK.md
 /docs/
 /.ai/
+
+# Python & testing artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+.env
