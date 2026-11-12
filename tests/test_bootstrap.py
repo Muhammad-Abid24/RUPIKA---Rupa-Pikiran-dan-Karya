@@ -12,10 +12,10 @@ runner = CliRunner()
 
 
 def test_cli_help():
-    """Verify stockforge --help displays usage and commands."""
+    """Verify stockforge / rupika --help displays usage and commands."""
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "StockForge" in result.output
+    assert "RUPIKA" in result.output
     assert "init" in result.output
     assert "doctor" in result.output
 
@@ -43,7 +43,7 @@ def test_cli_doctor_reports_safely(tmp_path: Path, monkeypatch):
 
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
-    assert "StockForge Doctor" in result.output
+    assert "RUPIKA Doctor" in result.output
 
     # The secret must be masked, NEVER printed in full raw text
     assert test_secret not in result.output

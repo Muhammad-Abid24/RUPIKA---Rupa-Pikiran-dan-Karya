@@ -15,8 +15,8 @@ from stockforge.config import Settings, get_settings
 from stockforge.logging import mask_secret, setup_logging
 
 app = typer.Typer(
-    name="stockforge",
-    help="StockForge: AI-powered commercial stock photography asset generation pipeline.",
+    name="rupika",
+    help="RUPIKA: Rupa, Pikiran, dan Karya — Pipeline produksi aset fotografi stok komersial berbasis AI.",
     add_completion=False,
 )
 console = Console()
@@ -38,7 +38,7 @@ def init(
     settings = get_settings()
     target_path = Path(data_dir or settings.data_dir).resolve()
 
-    console.print(f"[bold cyan]Memulai inisialisasi direktori StockForge di:[/bold cyan] {target_path}")
+    console.print(f"[bold cyan]Memulai inisialisasi direktori RUPIKA di:[/bold cyan] {target_path}")
 
     # Create subdirectories
     created: List[Path] = []
@@ -61,7 +61,7 @@ def init(
     config_dir = Path("config").resolve()
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    table = Table(title="Struktur Direktori Data StockForge", show_header=True)
+    table = Table(title="Struktur Direktori Data RUPIKA", show_header=True)
     table.add_column("Subdirektori", style="cyan")
     table.add_column("Status", style="green")
     table.add_column("Path", style="dim")
@@ -82,7 +82,7 @@ def init(
 @app.command(name="doctor")
 def doctor() -> None:
     """Inspect environment configuration, secrets status, storage and security invariants."""
-    console.print("[bold cyan]Menjalankan StockForge Doctor...[/bold cyan]\n")
+    console.print("[bold cyan]Menjalankan RUPIKA Doctor...[/bold cyan]\n")
 
     try:
         settings = get_settings()
@@ -200,7 +200,7 @@ def doctor() -> None:
         console.print("[bold red]Peringatan: Terdapat pelanggaran invarian kepatuhan![/bold red]")
         raise typer.Exit(code=1)
 
-    console.print("[bold green]Pemeriksaan StockForge Doctor selesai. Semua konfigurasi dasar dan invarian valid.[/bold green]")
+    console.print("[bold green]Pemeriksaan RUPIKA Doctor selesai. Semua konfigurasi dasar dan invarian valid.[/bold green]")
 
 
 def main() -> None:
