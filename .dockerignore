@@ -1,0 +1,39 @@
+# Version control & internal agent docs
+.git
+.github
+.ai
+docs
+*.md
+!README.md
+
+# Virtual environment and Python caches
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# Local databases, WAL, backups, exports, and persistent data
+data/
+/data/
+*.db
+*.db-wal
+*.db-shm
+logs/
+*.log
+backups/
+exports/
+
+# Secrets and environment configs
+.env
+.env.*
+!.env.example
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+

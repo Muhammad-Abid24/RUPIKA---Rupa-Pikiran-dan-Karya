@@ -1,0 +1,112 @@
+# Compose specification for RUPIKA / StockForge (SF-014A)
+name: rupika
+
+services:
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rupika:latest
+    container_name: rupika_bot
+    command: ["bot"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/config
+      - DATABASE_URL=sqlite:////data/stockforge.db
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+    networks:
+      - rupika_internal
+    healthcheck:
+      test: ["CMD", "rupika", "doctor"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rupika:latest
+    container_name: rupika_worker
+    command: ["worker", "--interval", "2.0", "--lease", "60"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/config
+      - DATABASE_URL=sqlite:////data/stockforge.db
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+    networks:
+      - rupika_internal
+    depends_on:
+      bot:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "rupika", "doctor"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  scheduler:
+    profiles:
+      - scheduler
+      - ops
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rupika:latest
+    container_name: rupika_scheduler
+    command: ["research", "list"]
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - DATA_DIR=/data
+      - CONFIG_DIR=/app/config
+      - DATABASE_URL=sqlite:////data/stockforge.db
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+    networks:
+      - rupika_internal
+
+networks:
+  rupika_internal:
+    driver: bridge
+    internal: false  # Allows outbound API calls to Telegram/AI models, but no host port bindings
+
+volumes:
+  stockforge_data:
+    name: stockforge_data
+

@@ -257,6 +257,34 @@ def worker_command(
         console.print("[bold yellow]Worker dihentikan oleh pengguna.[/bold yellow]")
 
 
+# Sub-command group: Database (SF-002, SF-014)
+db_app = typer.Typer(name="db", help="Manajemen migrasi dan skema basis data SQLite.")
+app.add_typer(db_app, name="db")
+
+
+@db_app.command(name="upgrade")
+def db_upgrade(
+    revision: str = typer.Option("head", "--revision", "-r", help="Target revisi Alembic"),
+) -> None:
+    """Jalankan migrasi skema database ke revisi target (default: head)."""
+    import alembic.command
+    import alembic.config
+
+    ini_path = Path("alembic.ini")
+    if not ini_path.exists():
+        console.print("[bold red]File alembic.ini tidak ditemukan.[/bold red]")
+        raise typer.Exit(code=1)
+
+    console.print(f"[bold cyan]Menjalankan migrasi database Alembic ke revisi:[/bold cyan] {revision}")
+    try:
+        alembic_cfg = alembic.config.Config(str(ini_path))
+        alembic.command.upgrade(alembic_cfg, revision)
+        console.print("[bold green]✓ Migrasi database berhasil dijalankan.[/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Gagal menjalankan migrasi database:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
 # Sub-command group: Research (SF-006)
 research_app = typer.Typer(
     name="research",

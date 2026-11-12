@@ -1,0 +1,37 @@
+# Development override Compose specification for localhost macOS Docker Desktop (SF-014A)
+name: rupika-dev
+
+services:
+  bot:
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - ./stockforge:/app/stockforge:ro
+      - ./alembic:/app/alembic:ro
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+
+  worker:
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - ./stockforge:/app/stockforge:ro
+      - ./alembic:/app/alembic:ro
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+
+  scheduler:
+    environment:
+      - LOG_LEVEL=DEBUG
+      - ALLOW_ADOBE_AUTO_SUBMISSION=false
+      - REQUIRE_HUMAN_APPROVAL=true
+    volumes:
+      - ./stockforge:/app/stockforge:ro
+      - ./alembic:/app/alembic:ro
+      - stockforge_data:/data
+      - ./config:/app/config:ro
+
