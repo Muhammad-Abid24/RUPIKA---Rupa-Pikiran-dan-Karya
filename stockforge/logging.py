@@ -8,11 +8,11 @@ from typing import Any, List, Optional
 
 # Regex patterns to detect and mask common secrets in log messages
 SECRET_PATTERNS = [
-    re.compile(r"(api[_-]?key\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE),
-    re.compile(r"(token\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE),
-    re.compile(r"(authorization\s*[:=]\s*['\"]?Bearer\s+)([\w\-\.]+)(['\"]?)", re.IGNORECASE),
-    re.compile(r"(secret\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE),
-    re.compile(r"(bot\d+:[\w\-]+)", re.IGNORECASE),  # Telegram bot tokens
+    (re.compile(r"(api[_-]?key\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE), r"\1***REDACTED***\3"),
+    (re.compile(r"(token\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE), r"\1***REDACTED***\3"),
+    (re.compile(r"(authorization\s*[:=]\s*['\"]?Bearer\s+)([\w\-\.]+)(['\"]?)", re.IGNORECASE), r"\1***REDACTED***\3"),
+    (re.compile(r"(secret\s*[:=]\s*['\"]?)([\w\-]+)(['\"]?)", re.IGNORECASE), r"\1***REDACTED***\3"),
+    (re.compile(r"bot\d+:[\w\-]+", re.IGNORECASE), r"bot***REDACTED***"),
 ]
 
 
@@ -33,25 +33,28 @@ class SecretMaskingFilter(logging.Filter):
         super().__init__()
         self.exact_secrets = [s for s in (additional_secrets or []) if s and len(s) > 3]
 
+    def _mask_text(self, text: str) -> str:
+        for pattern, repl in SECRET_PATTERNS:
+            text = pattern.sub(repl, text)
+        for secret in self.exact_secrets:
+            text = text.replace(secret, "***REDACTED***")
+        return text
+
     def filter(self, record: logging.LogRecord) -> bool:
         if isinstance(record.msg, str):
-            msg = record.msg
-            for pattern in SECRET_PATTERNS:
-                msg = pattern.sub(r"\1***REDACTED***\3", msg)
-            for secret in self.exact_secrets:
-                msg = msg.replace(secret, "***REDACTED***")
-            record.msg = msg
+            record.msg = self._mask_text(record.msg)
 
         if record.args:
-            # Mask arguments if tuple/dict
             if isinstance(record.args, dict):
-                masked_args = {}
-                for k, v in record.args.items():
-                    if isinstance(v, str):
-                        for pattern in SECRET_PATTERNS:
-                            v = pattern.sub(r"\1***REDACTED***\3", v)
-                    masked_args[k] = v
-                record.args = masked_args
+                record.args = {
+                    k: (self._mask_text(v) if isinstance(v, str) else v)
+                    for k, v in record.args.items()
+                }
+            elif isinstance(record.args, tuple):
+                record.args = tuple(
+                    self._mask_text(a) if isinstance(a, str) else a
+                    for a in record.args
+                )
         return True
 
 
