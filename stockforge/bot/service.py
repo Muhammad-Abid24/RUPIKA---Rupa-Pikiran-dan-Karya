@@ -72,3 +72,4 @@ def start_bot(token: Optional[str] = None) -> None:
     """Entry point to launch the bot service."""
     service = BotService(token=token)
     service.run_polling()
+

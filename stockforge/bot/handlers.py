@@ -110,3 +110,4 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             parse_mode=ParseMode.MARKDOWN,
             reply_markup=get_main_keyboard(),
         )
+
