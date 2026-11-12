@@ -257,6 +257,149 @@ def worker_command(
         console.print("[bold yellow]Worker dihentikan oleh pengguna.[/bold yellow]")
 
 
+# Sub-command group: Research (SF-006)
+research_app = typer.Typer(
+    name="research",
+    help="Riset niche pasar dan pembuatan konsep/prompt stok komersial.",
+)
+app.add_typer(research_app, name="research")
+
+
+@research_app.command(name="generate")
+def research_generate(
+    niche: str = typer.Argument(..., help="Nama niche atau topik komersial"),
+    count: int = typer.Option(10, "--count", "-c", help="Jumlah konsep yang dibuat"),
+) -> None:
+    """Generate ide konsep komersial berstatus 'draft' untuk suatu niche."""
+    import asyncio
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.providers.registry import ProviderRegistry
+    from stockforge.providers.router import ProviderRouter
+    from stockforge.research.service import ResearchService
+
+    console.print(f"[bold cyan]Melakukan riset konsep stok komersial untuk niche:[/bold cyan] {niche}")
+    console.print("[dim]Aturan invarian: Proses ini TIDAK melakukan panggilan pembuatan gambar (zero image calls).[/dim]")
+
+    engine = create_db_engine()
+    session_factory = create_session_factory(engine)
+
+    # Initialize router if config exists
+    config_path = Path("config/models.yaml")
+    router = None
+    if config_path.exists():
+        registry = ProviderRegistry()
+        router = ProviderRouter(registry)
+        try:
+            router.load_from_yaml(config_path)
+        except Exception:
+            router = None
+
+    service = ResearchService(session_factory=session_factory, router=router)
+
+    try:
+        result = asyncio.run(service.generate_concepts(niche_identifier=niche, count=count))
+    except Exception as e:
+        console.print(f"[bold red]Gagal melakukan riset konsep:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+    table = Table(title=f"Konsep Stok Komersial — Niche: {result.niche.name}", show_header=True)
+    table.add_column("ID", style="cyan", width=6)
+    table.add_column("Judul", style="bold")
+    table.add_column("Fingerprint", style="dim", width=12)
+    table.add_column("Status", style="yellow", width=10)
+
+    for c in result.concepts:
+        table.add_row(str(c.id), c.title, c.fingerprint[:10] + "...", c.status)
+
+    console.print(table)
+    console.print(f"\n[green]✓ {len(result.concepts)} konsep berhasil disimpan sebagai 'draft'.[/green]")
+    if result.total_duplicates > 0:
+        console.print(f"[yellow]⚠ {result.total_duplicates} konsep duplikat dicegah & ditandai.[/yellow]")
+    if result.unverified_count > 0:
+        console.print(f"[dim]ℹ {result.unverified_count} konsep ditandai sebagai unverified evidence.[/dim]")
+
+    console.print(
+        Panel.fit(
+            "[bold yellow]Pemberitahuan Human Approval:[/bold yellow]\n"
+            "Semua konsep berada dalam status 'draft'.\n"
+            "Gunakan perintah 'rupika research approve <ID>' untuk menyetujui konsep sebelum produksi.",
+            border_style="yellow",
+        )
+    )
+
+
+@research_app.command(name="approve")
+def research_approve(
+    concept_id: int = typer.Argument(..., help="ID konsep yang akan disetujui"),
+) -> None:
+    """Setujui konsep draft agar siap untuk tahap pembuatan batch gambar."""
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.research.service import ResearchService
+
+    engine = create_db_engine()
+    session_factory = create_session_factory(engine)
+    service = ResearchService(session_factory=session_factory)
+
+    try:
+        concept = service.approve_concept(concept_id)
+        console.print(f"[bold green]✓ Konsep #{concept.id} ('{concept.title}') berhasil disetujui![/bold green]")
+    except Exception as e:
+        console.print(f"[bold red]Gagal menyetujui konsep #{concept_id}:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
+@research_app.command(name="reject")
+def research_reject(
+    concept_id: int = typer.Argument(..., help="ID konsep yang akan ditolak"),
+    reason: Optional[str] = typer.Option(None, "--reason", "-r", help="Alasan penolakan"),
+) -> None:
+    """Tolak konsep draft."""
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.research.service import ResearchService
+
+    engine = create_db_engine()
+    session_factory = create_session_factory(engine)
+    service = ResearchService(session_factory=session_factory)
+
+    try:
+        concept = service.reject_concept(concept_id, reason=reason)
+        console.print(f"[yellow]✓ Konsep #{concept.id} ('{concept.title}') telah ditolak.[/yellow]")
+    except Exception as e:
+        console.print(f"[bold red]Gagal menolak konsep #{concept_id}:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
+@research_app.command(name="list")
+def research_list(
+    niche_id: Optional[int] = typer.Option(None, "--niche-id", "-n", help="Filter berdasarkan ID Niche"),
+    status: Optional[str] = typer.Option(None, "--status", "-s", help="Filter status ('draft', 'approved', 'rejected')"),
+) -> None:
+    """Daftar konsep yang tersimpan di basis data."""
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.research.service import ResearchService
+
+    engine = create_db_engine()
+    session_factory = create_session_factory(engine)
+    service = ResearchService(session_factory=session_factory)
+
+    concepts = service.list_concepts(niche_id=niche_id, status=status)
+    if not concepts:
+        console.print("[dim]Tidak ada konsep yang sesuai dengan kriteria.[/dim]")
+        return
+
+    table = Table(title="Daftar Konsep Riset", show_header=True)
+    table.add_column("ID", style="cyan", width=6)
+    table.add_column("Niche ID", width=10)
+    table.add_column("Judul", style="bold")
+    table.add_column("Status", width=12)
+
+    for c in concepts:
+        status_color = "yellow" if c.status == "draft" else ("green" if c.status == "approved" else "red")
+        table.add_row(str(c.id), str(c.niche_id), c.title, f"[{status_color}]{c.status}[/{status_color}]")
+
+    console.print(table)
+
+
 def main() -> None:
     """CLI entry point."""
     app()
