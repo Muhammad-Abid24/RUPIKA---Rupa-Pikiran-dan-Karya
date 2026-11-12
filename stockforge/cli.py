@@ -222,6 +222,41 @@ def bot_command(
         raise typer.Exit(code=1)
 
 
+@app.command(name="worker")
+def worker_command(
+    poll_interval: float = typer.Option(
+        1.0,
+        "--interval",
+        "-i",
+        help="Polling interval in seconds when queue is idle.",
+    ),
+    lease_seconds: int = typer.Option(
+        60,
+        "--lease",
+        "-l",
+        help="Lease duration in seconds.",
+    ),
+) -> None:
+    """Start worker daemon to process pipeline jobs from the queue."""
+    from stockforge.db.session import create_db_engine
+    from stockforge.queue.service import QueueService
+    from stockforge.queue.worker import Worker
+
+    console.print("[bold cyan]Menjalankan RUPIKA Worker daemon...[/bold cyan]")
+    engine = create_db_engine()
+    queue_service = QueueService(engine)
+    worker = Worker(
+        queue_service=queue_service,
+        poll_interval_seconds=poll_interval,
+        lease_seconds=lease_seconds,
+    )
+    try:
+        worker.run()
+    except KeyboardInterrupt:
+        worker.stop()
+        console.print("[bold yellow]Worker dihentikan oleh pengguna.[/bold yellow]")
+
+
 def main() -> None:
     """CLI entry point."""
     app()

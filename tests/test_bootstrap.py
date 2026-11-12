@@ -40,6 +40,7 @@ def test_cli_doctor_reports_safely(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setenv("RESEARCH_API_KEY", test_secret)
     monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "12345,67890")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "")  # Explicitly test missing secret behavior
 
     result = runner.invoke(app, ["doctor"])
     assert result.exit_code == 0
