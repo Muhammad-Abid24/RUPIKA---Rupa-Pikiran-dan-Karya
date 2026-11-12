@@ -102,3 +102,4 @@ class EtaEstimate(BaseModel):
         if v < 0:
             raise ValueError("Remaining seconds cannot be negative")
         return max(0.0, float(v))
+

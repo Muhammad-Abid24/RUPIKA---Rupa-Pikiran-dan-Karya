@@ -122,3 +122,4 @@ class ThrottledProgressUpdater:
         self.last_render_hash = text_hash
         self.last_edit_monotonic = now
         return True
+

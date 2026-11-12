@@ -332,3 +332,4 @@ def test_safety_invariants():
     assert eta1.remaining_seconds_median == eta2.remaining_seconds_median
     assert eta1.safety_guard_verified is True
     assert eta2.safety_guard_verified is True
+

@@ -382,3 +382,4 @@ class JobEtaTracker:
             for idx, status in item_states.items():
                 if idx in self._items:
                     self._items[idx].status = status
+
