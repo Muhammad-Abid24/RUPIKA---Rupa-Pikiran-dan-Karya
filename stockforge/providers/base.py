@@ -108,3 +108,4 @@ class VisionProvider(Protocol):
         **kwargs: Any,
     ) -> ProviderVisionResponse:
         ...
+

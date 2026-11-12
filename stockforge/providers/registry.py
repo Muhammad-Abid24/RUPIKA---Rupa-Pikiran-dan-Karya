@@ -129,3 +129,4 @@ class ProviderRegistry:
                 f"Model '{model_id}' tidak kompatibel untuk role '{role.value}'. "
                 f"Kapabilitas yang kurang: [{missing_names}]"
             )
+

@@ -221,3 +221,4 @@ def test_mock_provider_protocols_execution():
     assert v_res.request_id.startswith("req-")
     assert v_res.passed is True
     assert "clarity" in v_res.analysis
+

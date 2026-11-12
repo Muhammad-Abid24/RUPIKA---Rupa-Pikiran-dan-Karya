@@ -164,3 +164,4 @@ class ProviderRouter:
                 )
 
             self.set_route(role=role, primary_model_id=model_id)
+

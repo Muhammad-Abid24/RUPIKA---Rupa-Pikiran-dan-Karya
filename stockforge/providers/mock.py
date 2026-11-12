@@ -135,3 +135,4 @@ class MockVisionProvider(VisionProvider):
             actual_cost_cents=2,
             raw_response_redacted=str(sanitized_kwargs),
         )
+
