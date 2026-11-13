@@ -62,6 +62,8 @@ class HttpTextProvider(TextProvider):
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "max_tokens": max_tokens,
+            "max_completion_tokens": max_tokens,
+            "max_new_tokens": max_tokens,
             "temperature": temperature,
             "stream": False,
         }
@@ -93,12 +95,22 @@ class HttpTextProvider(TextProvider):
             )
             raise RuntimeError(f"Provider {self.provider_name} failed: [{norm.code.value}] {norm.safe_user_message}")
 
-        data = resp.json()
+        raw_text_body = resp.text
+        if "data: [DONE]" in raw_text_body:
+            raw_text_body = raw_text_body.replace("data: [DONE]", "").strip()
+
+        try:
+            data = json.loads(raw_text_body)
+        except Exception:
+            data = resp.json()
+
         choice = data.get("choices", [{}])[0]
         msg = choice.get("message", {})
         text = msg.get("content") or ""
         if not text and "reasoning_content" in msg:
             text = msg.get("reasoning_content", "")
+        if not text and "reasoning" in msg:
+            text = msg.get("reasoning", "")
 
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
@@ -266,6 +278,8 @@ class HttpVisionProvider(VisionProvider):
                 }
             ],
             "max_tokens": 2000,
+            "max_completion_tokens": 2000,
+            "max_new_tokens": 2000,
             "temperature": 0.2,
         }
         sanitized_payload = redact_sensitive_data(payload)
