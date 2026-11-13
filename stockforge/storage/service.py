@@ -147,3 +147,12 @@ class StorageService:
             logger.error("Gagal melakukan penulisan atomik untuk %s: %e", filename, e)
             raise
 
+    def read_bytes(self, filename: str, category: str = "raw") -> bytes:
+        """Safely read binary content from the category directory."""
+        path = self.resolve_safe_path(filename, category=category)
+        if not path.is_file():
+            raise FileNotFoundError(f"File tidak ditemukan di storage: {path}")
+        with open(path, "rb") as f:
+            return f.read()
+
+

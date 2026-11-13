@@ -120,6 +120,9 @@ class MockVisionProvider(VisionProvider):
     def __init__(self, provider_name: str = "mock-vision") -> None:
         self.provider_name = provider_name
         self.calls: list[Dict[str, Any]] = []
+        self.should_fail = False
+        self.custom_analysis: Optional[Dict[str, Any]] = None
+        self.custom_passed: Optional[bool] = None
 
     async def analyze_image(
         self,
@@ -131,20 +134,54 @@ class MockVisionProvider(VisionProvider):
     ) -> ProviderVisionResponse:
         req_id = f"req-{uuid.uuid4().hex[:8]}"
         sanitized_kwargs = redact_sensitive_data(kwargs)
+        role = kwargs.get("role", RoleType.VISION_QC)
         self.calls.append({
             "request_id": req_id,
             "model": model,
+            "role": role,
+            "prompt": prompt,
             "bytes_len": len(image_bytes),
         })
+
+        if self.should_fail:
+            raise RuntimeError(f"Simulated failure from {self.provider_name}")
+
+        if self.custom_analysis is not None:
+            analysis = self.custom_analysis
+            passed = self.custom_passed if self.custom_passed is not None else True
+        elif role == RoleType.METADATA:
+            analysis = {
+                "title": "Serene Mountain Lake at Sunrise",
+                "keywords": [
+                    "mountain", "lake", "sunrise", "nature",
+                    "reflection", "serene", "landscape", "water"
+                ],
+                "category_id": 11,
+                "content_type": "photo",
+            }
+            passed = True
+        else:
+            analysis = {
+                "passed": True,
+                "confidence": 0.95,
+                "clarity": 0.95,
+                "artifacts": False,
+                "commercial_quality": True,
+                "issues": [],
+                "notes": "No visual defects detected",
+            }
+            passed = True
+
         return ProviderVisionResponse(
             request_id=req_id,
             provider=self.provider_name,
             model=model,
-            role=RoleType.VISION_QC,
-            analysis={"clarity": 0.95, "artifacts": False, "commercial_quality": True},
-            passed=True,
+            role=role,
+            analysis=analysis,
+            passed=passed,
             estimated_cost_cents=2,
             actual_cost_cents=2,
             raw_response_redacted=str(sanitized_kwargs),
         )
+
 
