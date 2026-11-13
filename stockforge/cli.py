@@ -22,6 +22,12 @@ app = typer.Typer(
 console = Console()
 
 
+@app.callback()
+def main_callback() -> None:
+    """Initialize structured secret-safe logging."""
+    setup_logging()
+
+
 DATA_SUBDIRECTORIES = ["raw", "processed", "thumbnails", "exports", "backups", "logs"]
 
 

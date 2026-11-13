@@ -69,16 +69,17 @@ class QueueService:
         with self.engine.connect() as conn:
             conn.execute(text("BEGIN IMMEDIATE"))
             try:
-                # Find the oldest pending or eligible job
+                # Find the oldest pending or eligible job (including stale leases after worker restart)
                 find_query = text(
                     """
                     SELECT id FROM jobs
                     WHERE status IN ('pending', 'reserved')
+                       OR (status = 'running' AND lease_until < :now AND attempts < max_attempts)
                     ORDER BY id ASC
                     LIMIT 1
                     """
                 )
-                job_id = conn.execute(find_query).scalar()
+                job_id = conn.execute(find_query, {"now": now}).scalar()
 
                 if not job_id:
                     conn.execute(text("COMMIT"))

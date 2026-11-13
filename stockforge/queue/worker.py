@@ -124,31 +124,51 @@ class Worker:
             license_evidence="adobe_stock_commercial_sublicense_v1",
         )
 
-        # Generate single image
-        batch_res = asyncio.run(image_service.generate_batch(prompts=[prompt], max_batch_size=1, job_id=job_id))
-        if batch_res.failure_count > 0:
-            err_msg = batch_res.failed_items[0].get("error", "Generasi gambar gagal")
-            raise RuntimeError(err_msg)
+        # Check if an asset was already generated for this item (e.g. resumption after worker crash during QC or metadata)
+        from stockforge.db.models import Asset, JobItem
+        created_asset_id: Optional[int] = None
+        with Session(self.queue_service.engine) as session:
+            existing_item = session.scalar(
+                select(JobItem).where(JobItem.job_id == job_id, JobItem.item_index == item_index)
+            )
+            if existing_item and existing_item.asset_id:
+                asset_obj = session.get(Asset, existing_item.asset_id)
+                if asset_obj:
+                    created_asset_id = asset_obj.id
+                    logger.info(
+                        "Melanjutkan pemrosesan item #%d pada Job #%d dengan aset yang sudah ada (Asset #%d)",
+                        item_index,
+                        job_id,
+                        created_asset_id,
+                    )
 
-        if batch_res.successful_assets:
-            created_asset = batch_res.successful_assets[0]
+        if not created_asset_id:
+            # Generate single image
+            batch_res = asyncio.run(image_service.generate_batch(prompts=[prompt], max_batch_size=1, job_id=job_id))
+            if batch_res.failure_count > 0:
+                err_msg = batch_res.failed_items[0].get("error", "Generasi gambar gagal")
+                raise RuntimeError(err_msg)
+            if batch_res.successful_assets:
+                created_asset_id = batch_res.successful_assets[0].id
+
+        if created_asset_id:
             tracker = ItemProgressTracker(lambda: Session(self.queue_service.engine))
 
             # 1. Update stage to QC and publish live progress
-            tracker.update_item_stage(job_id, item_index, stage="qc", status="processing", asset_id=created_asset.id)
+            tracker.update_item_stage(job_id, item_index, stage="qc", status="processing", asset_id=created_asset_id)
             self._publish_progress(job_id, force=True)
 
             # Run deterministic QC automatically
             try:
                 from stockforge.qc.deterministic import DeterministicQcService
                 qc_svc = DeterministicQcService(session_factory=lambda: Session(self.queue_service.engine))
-                qc_svc.inspect_asset(created_asset.id)
+                qc_svc.inspect_asset(created_asset_id)
             except Exception as qc_ex:
-                logger.warning("Deterministic QC gagal untuk asset #%s: %s", created_asset.id, qc_ex)
+                logger.warning("Deterministic QC gagal untuk asset #%s: %s", created_asset_id, qc_ex)
 
             # 2. Update stage to metadata and publish live progress if router is configured
             if router:
-                tracker.update_item_stage(job_id, item_index, stage="metadata", status="processing", asset_id=created_asset.id)
+                tracker.update_item_stage(job_id, item_index, stage="metadata", status="processing", asset_id=created_asset_id)
                 self._publish_progress(job_id, force=True)
                 try:
                     from stockforge.qc.vision import VisionQcService
@@ -157,12 +177,12 @@ class Worker:
                         storage_service=storage,
                         router_or_provider=router,
                     )
-                    asyncio.run(vision_svc.inspect_image_vision(created_asset.id))
-                    asyncio.run(vision_svc.generate_metadata(created_asset.id))
+                    asyncio.run(vision_svc.inspect_image_vision(created_asset_id))
+                    asyncio.run(vision_svc.generate_metadata(created_asset_id))
                 except Exception as vis_ex:
-                    logger.warning("Vision QC / Metadata gagal untuk asset #%s: %s", created_asset.id, vis_ex)
+                    logger.warning("Vision QC / Metadata gagal untuk asset #%s: %s", created_asset_id, vis_ex)
 
-            return created_asset.id
+            return created_asset_id
         return None
 
     def _post_telegram(
