@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
+from PIL import Image
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
@@ -529,25 +530,63 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         photo_sent = False
         image_file = Path(asset.raw_path) if asset.raw_path else None
         if image_file and image_file.is_file():
+            # Prepare an optimized preview buffer for Telegram reply_photo (max 1920px, ~200-400KB JPEG)
+            # This ensures instant upload without timeouts or Telegram client render lag, while leaving the master 8 MP file intact on disk.
+            preview_bio = None
             try:
-                with open(image_file, "rb") as f:
+                with Image.open(image_file) as img:
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    orig_w, orig_h = img.size
+                    max_preview = 1920
+                    if max(orig_w, orig_h) > max_preview:
+                        sc = max_preview / max(orig_w, orig_h)
+                        nw = max(1, int(orig_w * sc))
+                        nh = max(1, int(orig_h * sc))
+                        img = img.resize((nw, nh), Image.Resampling.LANCZOS)
+                    preview_bio = io.BytesIO()
+                    preview_bio.name = image_file.name
+                    img.save(preview_bio, format="JPEG", quality=88, optimize=True)
+                    preview_bio.seek(0)
+            except Exception as prep_err:
+                logger.warning("Gagal membuat preview buffer gambar untuk review: %s. Menggunakan berkas asli.", prep_err)
+                preview_bio = None
+
+            try:
+                if preview_bio:
                     await update.effective_message.reply_photo(
-                        photo=f,
+                        photo=preview_bio,
                         caption=summary_text,
                         parse_mode=ParseMode.HTML,
                         reply_markup=markup,
                     )
+                else:
+                    with open(image_file, "rb") as f:
+                        await update.effective_message.reply_photo(
+                            photo=f,
+                            caption=summary_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=markup,
+                        )
                 photo_sent = True
             except Exception as e:
                 logger.warning("Gagal mengirim preview foto dengan caption penuh: %s. Mencoba foto dengan caption pendek...", e)
                 try:
                     short_caption = f"🖼️ <b>Review Aset Stok #{asset.id}</b> (<code>{html.escape(asset.filename or '')}</code>)"
-                    with open(image_file, "rb") as f:
+                    if preview_bio:
+                        preview_bio.seek(0)
                         await update.effective_message.reply_photo(
-                            photo=f,
+                            photo=preview_bio,
                             caption=short_caption,
                             parse_mode=ParseMode.HTML,
                         )
+                    else:
+                        with open(image_file, "rb") as f:
+                            await update.effective_message.reply_photo(
+                                photo=f,
+                                caption=short_caption,
+                                parse_mode=ParseMode.HTML,
+                            )
                     if update.effective_message:
                         await update.effective_message.reply_text(
                             summary_text,

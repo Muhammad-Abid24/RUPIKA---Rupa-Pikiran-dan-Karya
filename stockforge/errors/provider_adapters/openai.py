@@ -97,6 +97,10 @@ class OpenAIErrorAdapter(BaseProviderErrorAdapter):
             else:
                 code = ErrorCode.PROVIDER_SERVER_ERROR
                 user_msg = f"OpenAI server error (HTTP {http_status})."
+        # Entity too large (413)
+        elif http_status == 413 or "too large" in low_msg or "entity too large" in low_msg:
+            code = ErrorCode.INVALID_REQUEST
+            user_msg = f"Request payload too large for OpenAI / Vision provider (HTTP 413)."
         # Invalid request / client error (400)
         elif http_status == 400 or err_type == "invalid_request_error":
             code = ErrorCode.INVALID_REQUEST

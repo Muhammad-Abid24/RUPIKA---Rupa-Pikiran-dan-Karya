@@ -255,6 +255,36 @@ class HttpVisionProvider(VisionProvider):
         self.api_key = api_key
         self.timeout = timeout
 
+    @staticmethod
+    def _prepare_vision_image_bytes(
+        image_bytes: bytes,
+        max_dim: int = 1024,
+        max_size_bytes: int = 500_000,
+    ) -> bytes:
+        """Downscale in-memory copy of image for vision inspection API payload.
+
+        Prevents HTTP 413 (Request Entity Too Large) from reverse proxies (e.g. Nginx).
+        Master commercial raw image on disk remains untouched at target megapixels.
+        """
+        try:
+            img = Image.open(io.BytesIO(image_bytes))
+            orig_w, orig_h = img.size
+            scale = min(1.0, max_dim / max(orig_w, orig_h, 1))
+            if scale < 1.0 or len(image_bytes) > max_size_bytes or img.mode != "RGB":
+                new_w = max(1, int(orig_w * scale))
+                new_h = max(1, int(orig_h * scale))
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                if (new_w, new_h) != (orig_w, orig_h):
+                    img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85, optimize=True)
+                return buf.getvalue()
+            return image_bytes
+        except Exception as e:
+            logger.warning("Could not optimize image bytes for vision provider: %s", e)
+            return image_bytes
+
     async def analyze_image(
         self,
         image_bytes: bytes,
@@ -268,7 +298,8 @@ class HttpVisionProvider(VisionProvider):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        b64_img = base64.b64encode(image_bytes).decode("utf-8")
+        optimized_bytes = self._prepare_vision_image_bytes(image_bytes)
+        b64_img = base64.b64encode(optimized_bytes).decode("utf-8")
         payload = {
             "model": model,
             "messages": [

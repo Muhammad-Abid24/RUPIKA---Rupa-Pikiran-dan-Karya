@@ -288,3 +288,23 @@ def test_image_service_raises_when_no_active_instance_in_registry(tmp_path):
 
     assert "tidak memiliki instance aktif terdaftar" in str(exc_info.value)
 
+
+def test_http_vision_provider_prepares_optimized_payload_bytes():
+    """Verify HttpVisionProvider downsamples large 8 MP images to max 1024px to prevent HTTP 413."""
+    import io
+    from PIL import Image
+    from stockforge.providers.http import HttpVisionProvider
+
+    # Create dummy 8 MP image (2830 x 2830 px)
+    large_img = Image.new("RGB", (2830, 2830), color=(120, 180, 240))
+    buf = io.BytesIO()
+    large_img.save(buf, format="JPEG", quality=90)
+    raw_8mp_bytes = buf.getvalue()
+
+    optimized = HttpVisionProvider._prepare_vision_image_bytes(raw_8mp_bytes, max_dim=1024)
+    opt_img = Image.open(io.BytesIO(optimized))
+    w, h = opt_img.size
+    assert max(w, h) <= 1024
+    assert (w, h) == (1024, 1024)
+
+

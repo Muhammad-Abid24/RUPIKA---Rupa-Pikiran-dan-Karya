@@ -137,6 +137,37 @@ class Worker:
             return created_asset.id
         return None
 
+    def _post_telegram(
+        self,
+        token: str,
+        method: str,
+        payload: dict,
+        timeout_secs: float = 25.0,
+        max_retries: int = 2,
+    ) -> Optional[Any]:
+        """Post to Telegram API with connection reuse, timeouts, and transient retry."""
+        import ssl
+        import time
+        import httpx
+
+        url = f"https://api.telegram.org/bot{token}/{method}"
+        timeout = httpx.Timeout(connect=15.0, read=timeout_secs, write=15.0, pool=15.0)
+        for attempt in range(max_retries + 1):
+            try:
+                with httpx.Client(timeout=timeout) as client:
+                    resp = client.post(url, json=payload)
+                    return resp
+            except (httpx.TimeoutException, httpx.NetworkError, ssl.SSLError) as ex:
+                if attempt < max_retries:
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
+                logger.warning("Gagal memanggil Telegram %s (attempt %d/%d): %s", method, attempt + 1, max_retries + 1, ex)
+                return None
+            except Exception as ex:
+                logger.warning("Ekspepsi tak terduga memanggil Telegram %s: %s", method, ex)
+                return None
+        return None
+
     def _send_telegram_failure_alert(
         self,
         job_id: int,
@@ -146,7 +177,6 @@ class Worker:
     ) -> None:
         """Send immediate failure alert to Telegram admin(s)."""
         import html
-        import httpx
         from stockforge.config import get_settings
 
         try:
@@ -166,18 +196,18 @@ class Worker:
 
             for admin_id in admin_ids:
                 try:
-                    resp = httpx.post(
-                        f"https://api.telegram.org/bot{token}/sendMessage",
-                        json={
+                    resp = self._post_telegram(
+                        token=token,
+                        method="sendMessage",
+                        payload={
                             "chat_id": admin_id,
                             "text": alert_text,
                             "parse_mode": "HTML",
                         },
-                        timeout=10.0,
                     )
-                    if resp.status_code == 200:
+                    if resp is not None and resp.status_code == 200:
                         logger.info("Notifikasi error Telegram berhasil dikirim ke admin #%s untuk job #%s", admin_id, job_id)
-                    else:
+                    elif resp is not None:
                         logger.warning("Telegram API mengembalikan status %s saat kirim alert: %s", resp.status_code, resp.text)
                 except Exception as ex:
                     logger.warning("Gagal mengirim notifikasi error ke Telegram admin #%s: %s", admin_id, ex)
@@ -192,7 +222,6 @@ class Worker:
     ) -> None:
         """Publish or update live progress message in Telegram in real-time."""
         from datetime import timezone
-        import httpx
         from stockforge.config import get_settings
         from stockforge.bot.progress import compute_render_hash, format_progress_message
         from stockforge.db.models import TelegramProgressMessage, Job, utc_now
@@ -235,21 +264,21 @@ class Worker:
                         # Edit message if force, terminal, or past throttle interval
                         if force or summary.is_terminal or elapsed >= 2.0:
                             try:
-                                resp = httpx.post(
-                                    f"https://api.telegram.org/bot{token}/editMessageText",
-                                    json={
+                                resp = self._post_telegram(
+                                    token=token,
+                                    method="editMessageText",
+                                    payload={
                                         "chat_id": record.chat_id,
                                         "message_id": record.message_id,
                                         "text": text,
                                         "parse_mode": "HTML",
                                     },
-                                    timeout=10.0,
                                 )
-                                if resp.status_code == 200:
+                                if resp is not None and resp.status_code == 200:
                                     record.last_render_hash = current_hash
                                     record.last_updated_at = now
                                     session.commit()
-                                else:
+                                elif resp is not None:
                                     logger.warning("Telegram editMessageText returned %s: %s", resp.status_code, resp.text)
                             except Exception as ex:
                                 logger.warning("Gagal edit live progress Telegram: %s", ex)
@@ -257,16 +286,16 @@ class Worker:
                     # Send initial message to primary admin chat
                     target_chat = admin_ids[0]
                     try:
-                        resp = httpx.post(
-                            f"https://api.telegram.org/bot{token}/sendMessage",
-                            json={
+                        resp = self._post_telegram(
+                            token=token,
+                            method="sendMessage",
+                            payload={
                                 "chat_id": target_chat,
                                 "text": text,
                                 "parse_mode": "HTML",
                             },
-                            timeout=10.0,
                         )
-                        if resp.status_code == 200:
+                        if resp is not None and resp.status_code == 200:
                             data = resp.json()
                             msg_id = data.get("result", {}).get("message_id")
                             if msg_id:
@@ -279,7 +308,7 @@ class Worker:
                                 )
                                 session.add(new_rec)
                                 session.commit()
-                        else:
+                        elif resp is not None:
                             logger.warning("Telegram sendMessage returned %s: %s", resp.status_code, resp.text)
                     except Exception as ex:
                         logger.warning("Gagal kirim live progress awal Telegram: %s", ex)
@@ -302,14 +331,14 @@ class Worker:
                                 f"• <b>Gagal:</b> {summary.failed_count} dari {summary.total_items} gambar\n"
                                 f"Gunakan <code>/failed {job_id}</code> untuk rincian error."
                             )
-                        httpx.post(
-                            f"https://api.telegram.org/bot{token}/sendMessage",
-                            json={
+                        self._post_telegram(
+                            token=token,
+                            method="sendMessage",
+                            payload={
                                 "chat_id": target_chat,
                                 "text": completion_text,
                                 "parse_mode": "HTML",
                             },
-                            timeout=10.0,
                         )
                     except Exception as ex:
                         logger.warning("Gagal kirim notifikasi batch selesai: %s", ex)

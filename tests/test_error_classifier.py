@@ -245,3 +245,30 @@ def test_secret_redaction_and_safe_telegram_formatting():
     assert "<code>req_safe_001</code>" in alert_text
     assert "Routing to: <code>stability (sd3-turbo)</code>" in alert_text
 
+
+def test_http_413_entity_too_large_classified_as_invalid_request():
+    """Verify HTTP 413 and Nginx entity too large responses are classified as INVALID_REQUEST."""
+    nginx_html = (
+        "<html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n"
+        "<body>\r\n<center><h1>413 Request Entity Too Large</h1></center>\r\n"
+        "<hr><center>nginx/1.24.0 (Ubuntu)</center>\r\n</body>\r\n</html>"
+    )
+    # Generic provider
+    res_generic = classify_error(
+        http_status=413,
+        body=nginx_html,
+        provider="generic",
+    )
+    assert res_generic.code == ErrorCode.INVALID_REQUEST
+    assert "413" in res_generic.safe_user_message
+
+    # OpenAI / vision provider
+    res_openai = classify_error(
+        http_status=413,
+        body=nginx_html,
+        provider="openai",
+    )
+    assert res_openai.code == ErrorCode.INVALID_REQUEST
+    assert "413" in res_openai.safe_user_message
+
+

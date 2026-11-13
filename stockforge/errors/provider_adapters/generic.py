@@ -110,6 +110,9 @@ class GenericErrorAdapter(BaseProviderErrorAdapter):
             else:
                 code = ErrorCode.INVALID_REQUEST
                 user_msg = f"{provider} bad request (HTTP 400): {sanitize_sensitive_details(msg_str)[:150]}"
+        elif http_status == 413 or "too large" in low_msg or "entity too large" in low_msg:
+            code = ErrorCode.INVALID_REQUEST
+            user_msg = f"{provider} payload too large (HTTP 413): entity size exceeds provider limit."
         elif http_status == 409:
             code = ErrorCode.CONCURRENCY_LIMIT
             user_msg = f"{provider} conflict / concurrent request limit (HTTP 409)."

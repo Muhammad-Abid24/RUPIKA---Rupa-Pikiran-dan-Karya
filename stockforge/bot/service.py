@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-from telegram.error import Conflict, TelegramError, TimedOut
+from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from stockforge.bot.handlers import health_handler, help_handler, start_handler
@@ -151,7 +151,8 @@ class BotService:
         # Register global error handler with 409 Conflict detection
         async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             err = context.error
-            if isinstance(err, Conflict) or (err and "conflict" in str(err).lower()):
+            err_str = str(err).lower() if err else ""
+            if isinstance(err, Conflict) or "conflict" in err_str:
                 self.conflict_detected = True
                 logger.critical(
                     "Konflik polling Telegram terdeteksi (HTTP 409 Conflict): "
@@ -161,8 +162,16 @@ class BotService:
                     await context.application.updater.stop()
                 if context.application:
                     await context.application.stop()
-            elif isinstance(err, TimedOut) or (err and "timed out" in str(err).lower()):
-                logger.warning("Koneksi jaringan polling Telegram timeout (sementara): %s. Polling otomatis melanjutkan...", err)
+            elif (
+                isinstance(err, (TimedOut, NetworkError))
+                or "timed out" in err_str
+                or "remoteprotocolerror" in err_str
+                or "disconnected without sending a response" in err_str
+            ):
+                logger.warning(
+                    "Koneksi polling Telegram terputus sementara: %s. Polling otomatis menyambung kembali...",
+                    err,
+                )
             elif isinstance(err, TelegramError):
                 logger.error("Terjadi galat Telegram: %s", err)
             else:
