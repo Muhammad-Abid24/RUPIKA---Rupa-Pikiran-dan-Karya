@@ -320,3 +320,132 @@ def test_safe_extract_json():
     # Invalid payload raises ValueError
     with pytest.raises(ValueError):
         safe_extract_json("Not a json at all")
+
+
+# ---------------------------------------------------------------------------
+# Test 9: Fail-Closed Guardrail: Error / Timeout never marks asset as passed
+# ---------------------------------------------------------------------------
+def test_fail_closed_guardrail_on_error_or_timeout(test_env):
+    import asyncio
+    session_factory, storage_service, storage_dir = test_env
+    asset = _create_sample_asset(session_factory, storage_dir, asset_id=301)
+
+    # Initially asset status is generated or qc_passed
+    with session_factory() as session:
+        a = session.get(Asset, 301)
+        a.status = "qc_passed"
+        session.commit()
+
+    # Provider raises timeout
+    failing_provider = MockVisionProvider("flaky-vision-qc")
+    failing_provider.should_fail = True
+
+    service = VisionQcService(
+        session_factory=session_factory,
+        storage_service=storage_service,
+        router_or_provider=failing_provider,
+    )
+
+    qc_res = asyncio.run(service.inspect_image_vision(asset_id=301, safe_fallback=True))
+
+    # Assert FAIL-CLOSED: QC passed is strictly False
+    assert qc_res.passed is False
+    assert qc_res.score == 0.0
+
+    # Assert Asset status is reverted to qc_failed in database
+    with session_factory() as session:
+        updated_asset = session.get(Asset, 301)
+        assert updated_asset.status == "qc_failed"
+
+
+# ---------------------------------------------------------------------------
+# Test 10: Anatomy Detection Guardrail: Hands, Fingers, Face, and Interactions
+# ---------------------------------------------------------------------------
+def test_anatomy_detection_guardrail(test_env):
+    import asyncio
+    session_factory, storage_service, storage_dir = test_env
+    asset = _create_sample_asset(session_factory, storage_dir, asset_id=302)
+
+    mock_provider = MockVisionProvider("anatomy-vision-qc")
+    # Scenario: Model claims passed=true, but anatomy evaluation contains finger defect
+    mock_provider.custom_analysis = {
+        "passed": True,  # Model incorrectly said true
+        "confidence": 0.82,
+        "anatomy": {
+            "has_humans": True,
+            "hands_and_fingers_defect": True,
+            "face_defect": False,
+            "interaction_defect": True,
+            "details": "Left hand holding cup has 6 fingers and blends into cup handle"
+        },
+        "issues": ["polydactyly detected", "finger blending into cup handle"],
+        "notes": "Hand has six fingers with melting joints",
+    }
+    mock_provider.custom_passed = True
+
+    service = VisionQcService(
+        session_factory=session_factory,
+        storage_service=storage_service,
+        router_or_provider=mock_provider,
+    )
+
+    qc_res = asyncio.run(service.inspect_image_vision(asset_id=302))
+
+    # Fail-Closed Guardrail: anatomy defect MUST force passed=False
+    assert qc_res.passed is False
+    details = json.loads(qc_res.details_json)
+    assert details["passed"] is False
+    assert details["anatomy"]["hands_and_fingers_defect"] is True
+    assert details["anatomy"]["interaction_defect"] is True
+    assert "anatomical_defect_hands_or_fingers" in details["issues"]
+    assert "anatomical_defect_interaction" in details["issues"]
+
+    # Verify asset status is qc_failed
+    with session_factory() as session:
+        updated_asset = session.get(Asset, 302)
+        assert updated_asset.status == "qc_failed"
+
+
+# ---------------------------------------------------------------------------
+# Test 11: QC Evidence Guardrail: Persist Model, Timestamp, Score, and Evidence
+# ---------------------------------------------------------------------------
+def test_qc_evidence_persistence(test_env):
+    import asyncio
+    session_factory, storage_service, storage_dir = test_env
+    asset = _create_sample_asset(session_factory, storage_dir, asset_id=303)
+
+    mock_provider = MockVisionProvider("evidence-model-v2")
+    mock_provider.custom_analysis = {
+        "passed": True,
+        "confidence": 0.94,
+        "anatomy": {
+            "has_humans": True,
+            "hands_and_fingers_defect": False,
+            "face_defect": False,
+            "interaction_defect": False,
+            "details": "All 5 fingers clearly visible and anatomically correct"
+        },
+        "issues": [],
+        "notes": "Crisp human hands with accurate anatomical proportions",
+    }
+    mock_provider.custom_passed = True
+
+    service = VisionQcService(
+        session_factory=session_factory,
+        storage_service=storage_service,
+        router_or_provider=mock_provider,
+    )
+
+    qc_res = asyncio.run(service.inspect_image_vision(asset_id=303, model_override="rupika-qc-expert"))
+
+    assert qc_res.passed is True
+    assert qc_res.score == pytest.approx(0.94)
+
+    details = json.loads(qc_res.details_json)
+    # Check that model, score, timestamp, and anatomy evidence are recorded
+    assert details["model"] == "rupika-qc-expert"
+    assert "checked_at" in details and len(details["checked_at"]) > 0
+    assert details["anatomy"]["has_humans"] is True
+    assert details["anatomy"]["hands_and_fingers_defect"] is False
+    assert details["notes"] == "Crisp human hands with accurate anatomical proportions"
+

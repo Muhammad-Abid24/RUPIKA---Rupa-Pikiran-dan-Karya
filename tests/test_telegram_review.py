@@ -660,4 +660,65 @@ def test_regeneration_flow_executes_worker_and_produces_new_asset(review_env, mo
         assert new_asset.status == "qc_passed"
 
 
+def test_regeneration_improves_prompt_for_anatomy_and_reserves_budget(review_env, monkeypatch):
+    """Verify that when regenerating an asset with anatomy defects, prompt is improved and budget is reserved."""
+    from stockforge.db.models import utc_now
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    # Create asset #99 with anatomy defects in QC
+    _create_test_asset_with_qc(session_factory, raw_dir, asset_id=99, status="qc_failed")
+    with session_factory() as s:
+        qc_anatomy = QcResult(
+            asset_id=99,
+            check_name="vision_qc",
+            passed=False,
+            score=0.72,
+            details_json=json.dumps({
+                "passed": False,
+                "confidence": 0.72,
+                "model": "rupika-qc",
+                "anatomy": {
+                    "has_humans": True,
+                    "hands_and_fingers_defect": True,
+                    "face_defect": True,
+                    "interaction_defect": False,
+                    "details": "Malformed left hand with 6 fingers and asymmetric pupils"
+                },
+                "issues": ["anatomical_distortion_fingers", "extra digit on left hand"],
+                "notes": "Hand has six fingers with distorted knuckles",
+            }),
+            checked_at=utc_now(),
+        )
+        s.add(qc_anatomy)
+        s.commit()
+
+    token = service.generate_token(99)
+    cb_reg, cb_ctx_reg = build_mock_callback_update(
+        user_id=1001, chat_id=1001, callback_data=f"rev:reg:99:{token}"
+    )
+    asyncio.run(review_callback_handler(cb_reg, cb_ctx_reg))
+
+    with session_factory() as s:
+        from stockforge.db.models import BudgetLedger, Job, JobEvent
+        new_job = s.query(Job).filter(Job.type == "image_batch").order_by(Job.id.desc()).first()
+        assert new_job is not None
+        assert new_job.reserved_usd_cents == 5
+
+        # Verify BudgetLedger reservation entry
+        ledger = s.query(BudgetLedger).filter(BudgetLedger.job_id == new_job.id, BudgetLedger.kind == "reserve").first()
+        assert ledger is not None
+        assert ledger.amount_cents == 5
+
+        # Verify JobEvent payload contains improved prompt with anatomy clarity
+        ev = s.query(JobEvent).filter(JobEvent.job_id == new_job.id, JobEvent.event_type == "regeneration_request").first()
+        assert ev is not None
+        payload = json.loads(ev.payload_json)
+        improved_prompt = payload["prompt"]
+        assert "5 distinct fingers" in improved_prompt or "anatomically correct" in improved_prompt
+        assert "facial" in improved_prompt or "symmetry" in improved_prompt
+
+
+
 

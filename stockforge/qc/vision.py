@@ -228,6 +228,9 @@ class VisionQcEvaluation:
     confidence: float
     issues: List[str] = field(default_factory=list)
     notes: Optional[str] = None
+    model_id: str = "unknown"
+    checked_at: str = ""
+    anatomy: Dict[str, Any] = field(default_factory=dict)
     disclaimer: str = VISION_QC_DISCLAIMER
     raw_analysis: Dict[str, Any] = field(default_factory=dict)
 
@@ -237,6 +240,9 @@ class VisionQcEvaluation:
             "confidence": self.confidence,
             "issues": self.issues,
             "notes": self.notes,
+            "model": self.model_id,
+            "checked_at": self.checked_at,
+            "anatomy": self.anatomy,
             "disclaimer": self.disclaimer,
             "raw_analysis": self.raw_analysis,
         }
@@ -320,15 +326,37 @@ class VisionQcService:
             image_bytes = image_path.read_bytes()
 
         provider, model_id = self._resolve_provider_and_model(RoleType.VISION_QC, model_override)
+        now_iso = utc_now().isoformat()
 
         prompt = (
-            "Inspect this stock photograph for commercial quality, technical defects, and legal clearance. "
-            "1. Anti-Plagiarism & IP Clearance (STRICT): Check for any visible corporate logos, brand names, "
-            "registered trademarks, copyrighted fictional characters, celebrity likenesses, watermarks, or artist signatures. "
-            "2. Technical Quality: Check for anatomical distortions (malformed hands/fingers, distorted faces), severe blur, noise, or artifacts. "
-            "CRITICAL: If any trademark, brand logo, copyrighted character, watermark, or severe defect is detected, "
-            "you MUST mark 'passed': false, describe the issue in 'issues', and explain in 'notes'. "
-            "Return JSON: {\"passed\": bool, \"confidence\": float (0.0-1.0), \"issues\": [str], \"notes\": str}"
+            "You are a rigorous commercial stock photography Quality Control (QC) inspector. "
+            "Inspect this image with extreme scrutiny across these mandatory inspection pillars:\n"
+            "1. ANATOMY & HUMAN SUBJECTS (HIGHEST PRIORITY):\n"
+            "   - Hands & Fingers: Count the exact number of fingers on each visible hand. Every visible hand MUST have exactly 5 distinct, well-defined fingers. Flag any extra fingers (polydactyly), missing fingers, fused/webbed digits, unnatural joints, floating thumbs, or claw-like distortions.\n"
+            "   - Hand Shape & Posture: Check for unnatural wrist bends, impossible finger contortions, or melting hand geometry.\n"
+            "   - Facial Coherence: Check for facial symmetry, coherent eye pupils and gaze, natural eyelids, realistic teeth, and natural mouth/nose structure. Flag any asymmetric melting eyes, uncanny valley artifacts, extra teeth, or warped features.\n"
+            "   - Human Interactions & Contact Boundaries: Check all points where hands touch objects (holding cups, tools, plants, phones, food, etc.) or touch other people. Flag any fingers disappearing into objects, objects melting into skin, overlapping hands blending into each other, or clipping geometry.\n"
+            "2. ANTI-PLAGIARISM & IP CLEARANCE (STRICT ZERO TOLERANCE):\n"
+            "   - Check for visible brand logos, trademarks, corporate symbols, copyrighted fictional characters, celebrity likenesses, watermarks, text overlays, or artist signatures.\n"
+            "3. TECHNICAL DEFECTS:\n"
+            "   - Check for severe blur, pixelation, severe noise, unnatural AI artifacts, or floating disjointed objects.\n\n"
+            "CRITICAL FAIL-CLOSED RULE:\n"
+            "If ANY anatomical defect (hand/finger count, distorted face, flawed interaction boundary), trademark/logo, watermark, or significant technical defect is present, "
+            "you MUST mark 'passed': false, list the specific issues in 'issues', provide an anatomy breakdown, and explain in 'notes'.\n\n"
+            "Return valid JSON in this exact structure:\n"
+            "{\n"
+            "  \"passed\": bool,\n"
+            "  \"confidence\": float (0.0 to 1.0),\n"
+            "  \"anatomy\": {\n"
+            "    \"has_humans\": bool,\n"
+            "    \"hands_and_fingers_defect\": bool,\n"
+            "    \"face_defect\": bool,\n"
+            "    \"interaction_defect\": bool,\n"
+            "    \"details\": str\n"
+            "  },\n"
+            "  \"issues\": [str],\n"
+            "  \"notes\": str\n"
+            "}"
         )
 
         try:
@@ -346,12 +374,47 @@ class VisionQcService:
             if not isinstance(issues, list):
                 issues = [str(issues)]
             notes = str(analysis_dict.get("notes", ""))
+            anatomy_dict = analysis_dict.get("anatomy", {})
+            if not isinstance(anatomy_dict, dict):
+                anatomy_dict = {"details": str(anatomy_dict)}
+
+            # Strict anatomy detection guardrails (Fail-Closed)
+            has_anatomy_defect = (
+                bool(anatomy_dict.get("hands_and_fingers_defect"))
+                or bool(anatomy_dict.get("face_defect"))
+                or bool(anatomy_dict.get("interaction_defect"))
+            )
+
+            # Also check textual mentions of anatomical defects in issues or notes
+            combined_text = ("; ".join(str(i) for i in issues) + " " + notes).lower()
+            anatomy_defect_keywords = [
+                "polydactyly", "extra finger", "missing finger", "6 fingers", "six fingers", "4 fingers", "four fingers",
+                "fused finger", "webbed finger", "distorted hand", "distorted face", "melting finger", "clipping hand",
+                "anatomical distortion", "deformed hand", "deformed finger"
+            ]
+            for kw in anatomy_defect_keywords:
+                if kw in combined_text:
+                    has_anatomy_defect = True
+                    if not any(kw in str(iss).lower() for iss in issues):
+                        issues.append(f"anatomical_defect_{kw.replace(' ', '_')}")
+
+            if has_anatomy_defect:
+                passed = False
+                if anatomy_dict.get("hands_and_fingers_defect") and "anatomical_defect_hands_or_fingers" not in issues:
+                    issues.append("anatomical_defect_hands_or_fingers")
+                if anatomy_dict.get("face_defect") and "anatomical_defect_face" not in issues:
+                    issues.append("anatomical_defect_face")
+                if anatomy_dict.get("interaction_defect") and "anatomical_defect_interaction" not in issues:
+                    issues.append("anatomical_defect_interaction")
 
             qc_eval = VisionQcEvaluation(
                 passed=passed,
                 confidence=confidence,
                 issues=[str(i) for i in issues],
                 notes=notes,
+                model_id=model_id,
+                checked_at=now_iso,
+                anatomy=anatomy_dict,
                 raw_analysis=analysis_dict,
             )
         except Exception as e:
@@ -362,11 +425,33 @@ class VisionQcService:
                 passed=False,
                 confidence=0.0,
                 issues=["vision_qc_processing_error", str(e)],
-                notes=f"Fallback otomatis akibat kesalahan model: {e}",
+                notes=f"Fail-closed: evaluasi model gagal ({e}). Gambar tidak diloloskan.",
+                model_id=model_id,
+                checked_at=now_iso,
+                anatomy={"has_humans": False, "hands_and_fingers_defect": False, "face_defect": False, "interaction_defect": False, "details": f"Error: {e}"},
                 raw_analysis={"error": str(e)},
             )
 
         with self.session_factory() as session:
+            # Enforce Fail-Closed asset status transition
+            asset_rec = session.get(Asset, asset_id)
+            if asset_rec:
+                if not qc_eval.passed:
+                    asset_rec.status = "qc_failed"
+                else:
+                    # Only mark qc_passed if all deterministic checks also passed
+                    det_failed = session.scalar(
+                        select(QcResult.id).where(
+                            QcResult.asset_id == asset_id,
+                            QcResult.check_name != "vision_qc",
+                            QcResult.passed == False,
+                        )
+                    )
+                    if not det_failed:
+                        asset_rec.status = "qc_passed"
+                    else:
+                        asset_rec.status = "qc_failed"
+
             qc_record = QcResult(
                 asset_id=asset_id,
                 check_name="vision_qc",

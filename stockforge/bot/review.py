@@ -119,6 +119,75 @@ class ReviewService:
 
         return prompt
 
+    def _improve_prompt_for_regeneration(self, session: Session, asset: Asset, base_prompt: str) -> str:
+        """Improve concept prompt to target and rectify anatomical, quality, and IP defects."""
+        qc_list = list(asset.qc_results) if asset.qc_results else []
+        issues: List[str] = []
+        notes = ""
+        has_anatomy_issue = False
+        has_hand_finger_issue = False
+        has_face_issue = False
+        has_interaction_issue = False
+        has_blur_issue = False
+        has_watermark_issue = False
+
+        for qc in qc_list:
+            if qc.details_json:
+                try:
+                    det = json.loads(qc.details_json)
+                    iss = det.get("issues", [])
+                    if isinstance(iss, list):
+                        issues.extend(str(i) for i in iss)
+                    notes += " " + str(det.get("notes", ""))
+                    anat = det.get("anatomy", {})
+                    if anat.get("hands_and_fingers_defect"):
+                        has_hand_finger_issue = True
+                        has_anatomy_issue = True
+                    if anat.get("face_defect"):
+                        has_face_issue = True
+                        has_anatomy_issue = True
+                    if anat.get("interaction_defect"):
+                        has_interaction_issue = True
+                        has_anatomy_issue = True
+                except Exception:
+                    pass
+
+        combined_issues = (" ".join(issues) + " " + notes).lower()
+        if any(w in combined_issues for w in ["finger", "hand", "digit", "polydactyly", "wrist"]):
+            has_hand_finger_issue = True
+            has_anatomy_issue = True
+        if any(w in combined_issues for w in ["face", "eye", "pupil", "teeth", "mouth"]):
+            has_face_issue = True
+            has_anatomy_issue = True
+        if any(w in combined_issues for w in ["interaction", "blend", "clipping", "overlap"]):
+            has_interaction_issue = True
+            has_anatomy_issue = True
+        if any(w in combined_issues for w in ["blur", "soft", "resolution", "noise"]):
+            has_blur_issue = True
+        if any(w in combined_issues for w in ["logo", "brand", "trademark", "watermark", "text"]):
+            has_watermark_issue = True
+
+        enhancements: List[str] = []
+        if has_hand_finger_issue:
+            enhancements.append("perfect anatomically correct hands with exactly 5 distinct fingers, natural finger articulation and structure, no extra digits, no fused fingers")
+        if has_face_issue:
+            enhancements.append("realistic symmetrical facial features, coherent eye pupils and gaze, natural realistic skin texture")
+        if has_interaction_issue:
+            enhancements.append("clear crisp physical contact boundaries, natural physical interaction without clipping or melting overlap")
+        elif has_anatomy_issue:
+            enhancements.append("anatomically correct human anatomy, natural realistic proportions")
+
+        if has_blur_issue:
+            enhancements.append("razor-sharp focus, professional commercial photography, 8k resolution, crisp clean details")
+        if has_watermark_issue:
+            enhancements.append("clean background without any logos, trademarks, text overlays, or watermarks")
+
+        if not enhancements:
+            enhancements.append("perfect anatomically correct hands with 5 fingers, realistic facial features, sharp focus, professional commercial stock photography")
+
+        improved = f"{base_prompt.rstrip('. ')}, {', '.join(enhancements)}"
+        return improved
+
     def get_pending_asset(
         self,
         asset_id: Optional[int] = None,
@@ -140,7 +209,7 @@ class ReviewService:
                     select(Asset)
                     .where(
                         Asset.job_id == job_id,
-                        Asset.status.in_(["qc_passed", "review_pending", "generated"]),
+                        Asset.status.in_(["qc_passed", "review_pending", "generated", "qc_failed"]),
                     )
                     .order_by(Asset.id.desc())
                     .limit(1)
@@ -155,7 +224,7 @@ class ReviewService:
             if asset_id is None and job_id is None:
                 stmt = (
                     select(Asset)
-                    .where(Asset.status.in_(["qc_passed", "review_pending", "generated"]))
+                    .where(Asset.status.in_(["qc_passed", "review_pending", "generated", "qc_failed"]))
                     .order_by(Asset.id.desc())
                     .limit(1)
                 )
@@ -352,6 +421,9 @@ class ReviewService:
         vision_score: Optional[float] = None
         vision_issues: List[str] = []
         vision_notes = "-"
+        vision_model = "-"
+        vision_checked_at = "-"
+        anatomy_summary = "Normal / Tidak ada cacat anatomi terdeteksi"
 
         for qc in qc_list:
             if qc.check_name == "vision_qc":
@@ -361,6 +433,20 @@ class ReviewService:
                     det = json.loads(qc.details_json) if qc.details_json else {}
                     vision_issues = det.get("issues", [])
                     vision_notes = det.get("notes", "-")
+                    vision_model = det.get("model", "-")
+                    vision_checked_at = det.get("checked_at", str(qc.checked_at) if qc.checked_at else "-")
+                    anat = det.get("anatomy", {})
+                    anat_findings = []
+                    if anat.get("hands_and_fingers_defect"):
+                        anat_findings.append("Cacat Jari/Tangan")
+                    if anat.get("face_defect"):
+                        anat_findings.append("Cacat Wajah/Mata")
+                    if anat.get("interaction_defect"):
+                        anat_findings.append("Cacat Kontak/Interaksi")
+                    if anat.get("details"):
+                        anat_findings.append(anat.get("details"))
+                    if anat_findings:
+                        anatomy_summary = "; ".join(anat_findings)
                 except Exception:
                     pass
             else:
@@ -409,8 +495,11 @@ class ReviewService:
             det_block,
             "",
             "[4. HASIL QUALITY CONTROL (VISION AI)]",
-            f"Status Vision QC: {'LOLOS' if vision_passed else 'FLAGGED / GAGAL'}",
+            f"Status Vision QC: {'LOLOS' if vision_passed else 'FLAGGED / GAGAL (FAIL-CLOSED)'}",
+            f"Model Vision QC : {vision_model}",
+            f"Waktu Periksa   : {vision_checked_at}",
             f"Skor Kualitas   : {vision_score:.2f}" if vision_score is not None else "Skor Kualitas   : -",
+            f"Evaluasi Anatomi: {anatomy_summary}",
             "Daftar Isu Visual / Legal:",
             issues_block,
             f"Catatan Analisis: {vision_notes}",
@@ -511,15 +600,29 @@ class ReviewService:
             elif action == "reg":
                 asset.status = "regenerating"
                 # Atomically enqueue regeneration job within this same transaction
-                prompt = self._resolve_prompt_for_asset(session, asset)
+                base_prompt = self._resolve_prompt_for_asset(session, asset)
+                improved_prompt = self._improve_prompt_for_regeneration(session, asset, base_prompt)
                 op_id = f"regen_{asset.id}_{int(time.time())}"
-                from stockforge.db.models import Job, JobEvent, JobItem
+                from stockforge.db.models import BudgetLedger, Job, JobEvent, JobItem
+                from stockforge.budget.service import BudgetService, BudgetExceededError
+
+                regen_cost_cents = 5  # Cost approval for regenerated asset
+                budget_svc = BudgetService(session_factory=self.session_factory)
+                daily_committed = budget_svc.get_daily_committed_cents(session)
+                if daily_committed + regen_cost_cents > budget_svc.daily_limit_cents:
+                    return ReviewResult(
+                        success=False,
+                        asset_id=asset_id,
+                        decision=target_decision,
+                        message=f"Batas anggaran harian terlampaui ({budget_svc.daily_limit_cents} sen)! Regenerasi dibatalkan.",
+                    )
+
                 new_job = Job(
                     type="image_batch",
                     operation_id=op_id,
                     created_by=user_rec.id,
                     status="pending",
-                    reserved_usd_cents=0,
+                    reserved_usd_cents=regen_cost_cents,
                     attempts=0,
                     max_attempts=3,
                     created_at=now,
@@ -529,14 +632,25 @@ class ReviewService:
                 session.flush()
                 new_job_id = new_job.id
 
+                # Record BudgetLedger reservation
+                ledger_entry = BudgetLedger(
+                    job_id=new_job.id,
+                    kind="reserve",
+                    amount_cents=regen_cost_cents,
+                    created_at=now,
+                )
+                session.add(ledger_entry)
+
                 regen_event = JobEvent(
                     job_id=new_job.id,
                     event_type="regeneration_request",
                     payload_json=json.dumps({
                         "original_asset_id": asset.id,
                         "original_job_id": asset.job_id,
-                        "prompt": prompt,
-                        "notes": notes or "User requested regeneration from /review",
+                        "prompt": improved_prompt,
+                        "base_prompt": base_prompt,
+                        "reserved_usd_cents": regen_cost_cents,
+                        "notes": notes or "User requested regeneration from /review with improved prompt",
                     }),
                     created_at=now,
                 )
@@ -551,7 +665,7 @@ class ReviewService:
                     updated_at=now,
                 )
                 session.add(item_rec)
-                logger.info("Enqueued regeneration job #%d for Asset #%d with prompt: %s", new_job.id, asset.id, prompt[:60])
+                logger.info("Enqueued regeneration job #%d for Asset #%d with improved prompt: %s", new_job.id, asset.id, improved_prompt[:70])
 
             # 5. Persist review record
             review_entry = Review(

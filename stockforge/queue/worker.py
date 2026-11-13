@@ -177,10 +177,17 @@ class Worker:
                         storage_service=storage,
                         router_or_provider=router,
                     )
-                    asyncio.run(vision_svc.inspect_image_vision(created_asset_id))
+                    v_res = asyncio.run(vision_svc.inspect_image_vision(created_asset_id))
                     asyncio.run(vision_svc.generate_metadata(created_asset_id))
+                    if not v_res.passed:
+                        logger.warning("Fail-closed: Asset #%s ditolak oleh Vision QC: %s", created_asset_id, v_res.details_json)
                 except Exception as vis_ex:
-                    logger.warning("Vision QC / Metadata gagal untuk asset #%s: %s", created_asset_id, vis_ex)
+                    logger.warning("Vision QC / Metadata gagal untuk asset #%s: %s. Menetapkan status qc_failed (Fail-Closed).", created_asset_id, vis_ex)
+                    with Session(self.queue_service.engine) as fail_sess:
+                        fa = fail_sess.get(Asset, created_asset_id)
+                        if fa:
+                            fa.status = "qc_failed"
+                            fail_sess.commit()
 
             return created_asset_id
         return None
