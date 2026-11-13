@@ -4,9 +4,10 @@ from __future__ import annotations
 import logging
 from typing import Optional
 from telegram.error import Conflict, TelegramError
-from telegram.ext import Application, ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from stockforge.bot.handlers import health_handler, help_handler, start_handler
+from stockforge.bot.review import review_callback_handler, review_command_handler
 from stockforge.config import get_settings
 
 logger = logging.getLogger("stockforge.bot.service")
@@ -39,6 +40,11 @@ class BotService:
         app.add_handler(CommandHandler("start", start_handler))
         app.add_handler(CommandHandler("help", help_handler))
         app.add_handler(CommandHandler("health", health_handler))
+        app.add_handler(CommandHandler("review", review_command_handler))
+
+        # Register callback query handlers
+        app.add_handler(CallbackQueryHandler(review_callback_handler, pattern=r"^rev:"))
+
 
         # Register global error handler with 409 Conflict detection
         async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

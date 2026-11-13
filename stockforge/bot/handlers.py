@@ -17,10 +17,12 @@ logger = logging.getLogger("stockforge.bot.handlers")
 def get_main_keyboard() -> ReplyKeyboardMarkup:
     """Build standardized reply keyboard for admin interactions."""
     keyboard = [
-        [KeyboardButton("/research"), KeyboardButton("/jobs")],
-        [KeyboardButton("/health"), KeyboardButton("/help")],
+        [KeyboardButton("/research"), KeyboardButton("/review")],
+        [KeyboardButton("/jobs"), KeyboardButton("/health")],
+        [KeyboardButton("/help")],
     ]
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True, one_time_keyboard=False)
+
 
 
 @require_admin
@@ -53,7 +55,9 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• `/help` — Menampilkan dokumentasi perintah operasional ini.\n"
         "• `/health` — Diagnostik konektivitas basis data dan integritas storage.\n"
         "• `/research` — Riset niche pasar komersial dan konsep aset.\n"
+        "• `/review` — Wizard peninjauan visual dan persetujuan aset stok.\n"
         "• `/jobs` — Status antrean dan kemajuan pemrosesan batch.\n\n"
+
         "ℹ️ *Catatan Keamanan*: RUPIKA menerapkan invarian persetujuan manusia "
         "(`REQUIRE_HUMAN_APPROVAL=True`) dan tidak mengizinkan pengunggahan otomatis "
         "ke portal Adobe Stock."

@@ -54,6 +54,11 @@ def require_admin(
         chat = update.effective_chat
         user = update.effective_user
 
+        is_callback = bool(
+            update.callback_query is not None
+            and isinstance(getattr(update.callback_query, "data", None), str)
+        )
+
         # 1. Enforce private chat only (reject groups, supergroups, channels)
         if not is_private_chat(chat):
             logger.warning(
@@ -62,7 +67,12 @@ def require_admin(
                 chat.type if chat else "unknown",
                 user.id if user else "unknown",
             )
-            if update.effective_message:
+            if is_callback:
+                try:
+                    await update.callback_query.answer(GROUP_CHAT_REJECT_MESSAGE, show_alert=True)
+                except Exception:
+                    pass
+            elif update.effective_message:
                 try:
                     await update.effective_message.reply_text(GROUP_CHAT_REJECT_MESSAGE)
                 except Exception:
@@ -73,10 +83,17 @@ def require_admin(
         user_id = user.id if user else None
         if not is_authorized_user(user_id):
             logger.warning("Percobaan akses tidak terotorisasi: user_id=%s", user_id)
-            if update.effective_message:
+            if is_callback:
+                try:
+                    await update.callback_query.answer(DENIED_GENERIC_MESSAGE, show_alert=True)
+                except Exception:
+                    pass
+            elif update.effective_message:
                 # Deny safely without revealing configuration, tokens, or admin lists
                 await update.effective_message.reply_text(DENIED_GENERIC_MESSAGE)
             return
+
+
 
         # Authorized admin in private chat
         return await handler_fn(update, context)
