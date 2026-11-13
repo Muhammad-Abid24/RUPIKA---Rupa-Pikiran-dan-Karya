@@ -51,8 +51,9 @@ async def research_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
     session_factory: Callable[[], Session],
+    router: Optional[Any] = None,
 ) -> None:
-    """Handle /research [topic] generating source-aware niche candidates."""
+    """Handle /research [topic] generating source-aware niche candidates via AI provider."""
     topic = " ".join(context.args) if context.args else "Commercial Stock Photography Trends"
     user_tg_id = update.effective_user.id if update.effective_user else 0
 
@@ -71,21 +72,44 @@ async def research_command(
         session.commit()
         session.refresh(run)
 
-        # 2. Generate 2 distinct candidates with explicit source provenance
-        candidates_data = [
-            {
-                "niche_name": f"{topic} — Urban Lifestyle",
-                "rationale": "High search volume on Adobe Stock for modern workplace and casual business.",
-                "evidence_quality": "verified",
-                "sources": ["https://stock.adobe.com/insights/trends-2026", "Internal market survey"],
-            },
-            {
-                "niche_name": f"{topic} — Sustainable Agriculture",
-                "rationale": "Emerging commercial demand for eco-friendly tech and hydroponics in SE Asia.",
-                "evidence_quality": "unverified",
-                "sources": ["Unverified community discussion"],
-            },
-        ]
+        # 2. Generate distinct candidates with explicit source provenance via AI router or fallback
+        candidates_data = []
+        if router is not None:
+            from stockforge.research.service import ResearchService
+            r_service = ResearchService(session_factory=session_factory, router=router)
+            try:
+                discovered = await r_service.discover_niches(domain_query=topic, count=3)
+                for item in discovered:
+                    name = item.get("name") or f"{topic} — Niche"
+                    rationale = item.get("rationale") or "High commercial demand in stock marketplaces."
+                    source_notes = item.get("source_notes")
+                    sources = item.get("sources") or ([source_notes] if source_notes else ["Market Trend Analysis"])
+                    quality = "verified" if source_notes else "unverified"
+                    candidates_data.append({
+                        "niche_name": name,
+                        "rationale": rationale,
+                        "evidence_quality": quality,
+                        "sources": sources,
+                    })
+            except Exception as ex:
+                logger.warning("Gagal melakukan riset via AI router, beralih ke fallback terstruktur: %s", ex)
+
+        if not candidates_data:
+            # Fallback structured candidates
+            candidates_data = [
+                {
+                    "niche_name": f"{topic} — Urban Lifestyle",
+                    "rationale": "High search volume on Adobe Stock for modern workplace and casual business.",
+                    "evidence_quality": "verified",
+                    "sources": ["https://stock.adobe.com/insights/trends-2026", "Internal market survey"],
+                },
+                {
+                    "niche_name": f"{topic} — Sustainable Agriculture",
+                    "rationale": "Emerging commercial demand for eco-friendly tech and hydroponics in SE Asia.",
+                    "evidence_quality": "unverified",
+                    "sources": ["Unverified community discussion"],
+                },
+            ]
 
         cand_records: List[ResearchCandidate] = []
         for c in candidates_data:

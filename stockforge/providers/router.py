@@ -128,6 +128,7 @@ class ProviderRouter:
         for p_name, p_info in providers_cfg.items():
             base_url = env.get(p_info.get("base_url_env", ""), "")
             secret_env = p_info.get("api_key_env", "")
+            api_key = env.get(secret_env, "")
             kind_str = p_info.get("kind", "text")
             from stockforge.providers.base import ProviderKind
             kind = ProviderKind(kind_str)
@@ -137,6 +138,12 @@ class ProviderRouter:
                 base_url=base_url,
                 secret_env=secret_env,
             )
+            if base_url and api_key and kind == ProviderKind.TEXT:
+                from stockforge.providers.http import HttpTextProvider
+                self.registry.register_provider_instance(
+                    p_name,
+                    HttpTextProvider(provider_name=p_name, base_url=base_url, api_key=api_key),
+                )
 
         # 2. Register and configure role routes
         for role_name, r_info in roles_cfg.items():
@@ -152,8 +159,9 @@ class ProviderRouter:
                 ProviderKind.VISION if role in (RoleType.VISION_QC, RoleType.METADATA) else ProviderKind.TEXT
             )
 
-            # Register if not already registered
-            if not self.registry.get_model(model_id):
+            # Register if not already registered, or add capability
+            existing = self.registry.get_model(model_id)
+            if not existing:
                 self.registry.register_model(
                     model_id=model_id,
                     provider_name=p_name,
@@ -162,6 +170,8 @@ class ProviderRouter:
                     license_evidence="commercial_stock_sublicensable",
                     cost_per_unit_cents=10,
                 )
+            else:
+                existing.capabilities.update(required_caps)
 
             self.set_route(role=role, primary_model_id=model_id)
 

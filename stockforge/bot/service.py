@@ -59,6 +59,9 @@ class BotService:
         from stockforge.queue.service import QueueService
         from stockforge.research.gate import GenerationGate
         from stockforge.research.planner import ProductionPlanner
+        from stockforge.providers.registry import ProviderRegistry
+        from stockforge.providers.router import ProviderRouter
+        from pathlib import Path
 
         def get_sf():
             from stockforge.db.session import create_session_factory
@@ -68,6 +71,18 @@ class BotService:
             from stockforge.config import get_settings
             from stockforge.db.session import create_db_engine
             return QueueService(engine=create_db_engine(get_settings().database_url))
+
+        def get_router():
+            for cfg_candidate in [Path("config/models.yaml"), Path("/app/config/models.yaml")]:
+                if cfg_candidate.exists():
+                    reg = ProviderRegistry()
+                    r = ProviderRouter(reg)
+                    try:
+                        r.load_from_yaml(cfg_candidate)
+                        return r
+                    except Exception as e:
+                        logger.warning("Gagal memuat konfigurasi provider models.yaml: %s", e)
+            return None
 
         async def _status_handler(u, c):
             await status_command(u, c, session_factory=get_sf())
@@ -85,7 +100,7 @@ class BotService:
             await providers_command(u, c)
 
         async def _research_cmd(u, c):
-            await research_command(u, c, session_factory=get_sf())
+            await research_command(u, c, session_factory=get_sf(), router=get_router())
 
         async def _research_cb(u, c):
             sf = get_sf()

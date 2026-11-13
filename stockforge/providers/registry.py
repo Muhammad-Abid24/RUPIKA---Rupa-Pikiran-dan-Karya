@@ -51,6 +51,15 @@ class ProviderRegistry:
     def __init__(self) -> None:
         self._providers: Dict[str, ProviderRegistration] = {}
         self._models: Dict[str, ModelRegistration] = {}
+        self._provider_instances: Dict[str, Any] = {}
+
+    def register_provider_instance(self, name: str, instance: Any) -> None:
+        """Register an initialized client instance for a provider."""
+        self._provider_instances[name] = instance
+
+    def get_provider_instance(self, name: str) -> Optional[Any]:
+        """Retrieve initialized client instance for a provider."""
+        return self._provider_instances.get(name)
 
     def register_provider(
         self,
