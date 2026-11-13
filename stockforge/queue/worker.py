@@ -47,7 +47,7 @@ class Worker:
             status = session.scalar(select(Job.status).where(Job.id == job_id))
             return status == "cancelled"
 
-    def _default_pipeline_item_processor(self, job_id: int, item_index: int) -> None:
+    def _default_pipeline_item_processor(self, job_id: int, item_index: int) -> Optional[int]:
         """Execute default image pipeline: generation -> QC -> metadata -> review."""
         from stockforge.config import get_settings
         from stockforge.storage.service import StorageService
@@ -426,7 +426,7 @@ class Worker:
     def execute_job_items(
         self,
         job_id: int,
-        item_processor: Optional[Callable[[int, int], None]] = None,
+        item_processor: Optional[Callable[[int, int], Optional[int]]] = None,
     ) -> str:
         """Process items belonging to a claimed job with durable stage tracking.
         
@@ -511,7 +511,7 @@ class Worker:
 
     def run_once(
         self,
-        item_processor: Optional[Callable[[int, int], None]] = None,
+        item_processor: Optional[Callable[[int, int], Optional[int]]] = None,
     ) -> Optional[int]:
         """Attempt to claim and process exactly one job.
         
