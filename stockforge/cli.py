@@ -525,12 +525,12 @@ def ops_cycle(
     trigger_backup: bool = typer.Option(True, "--backup/--no-backup", help="Sertakan backup online SQLite"),
 ) -> None:
     """Jalankan satu siklus pemeliharaan lengkap: health checks -> backup -> cleanup."""
-    from stockforge.db.session import create_session_factory
+    from stockforge.db.session import create_db_engine, create_session_factory
     from stockforge.ops.scheduler import MaintenanceScheduler
     from stockforge.storage.service import StorageService
 
     settings = get_settings()
-    session_factory = create_session_factory(settings.database_url)
+    session_factory = create_session_factory(create_db_engine(settings.database_url))
     storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
 
     db_path = settings.resolved_database_path
@@ -577,12 +577,12 @@ def ops_backup() -> None:
 @ops_app.command(name="health")
 def ops_health() -> None:
     """Tampilkan diagnostik kapasitas disk, kesehatan antrean, dan anggaran harian."""
-    from stockforge.db.session import create_session_factory
+    from stockforge.db.session import create_db_engine, create_session_factory
     from stockforge.ops.health import check_budget_health, check_disk_space, check_queue_health
     from stockforge.storage.service import StorageService
 
     settings = get_settings()
-    session_factory = create_session_factory(settings.database_url)
+    session_factory = create_session_factory(create_db_engine(settings.database_url))
     storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
 
     disk = check_disk_space(storage_service.base_data_dir)

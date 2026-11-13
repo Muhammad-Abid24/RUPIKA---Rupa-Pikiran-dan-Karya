@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Generator, Optional, Tuple
+from typing import Generator, Optional, Tuple, Union
 from sqlalchemy import Engine, create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -45,9 +45,18 @@ def check_sqlite_integrity(engine: Engine) -> Tuple[bool, str]:
         return is_ok, "; ".join(messages)
 
 
-def get_session_factory(engine: Optional[Engine] = None) -> sessionmaker[Session]:
-    """Construct configured sessionmaker bound to engine."""
-    eng = engine or create_db_engine()
+def get_session_factory(engine: Optional[Union[Engine, str]] = None) -> sessionmaker[Session]:
+    """Construct configured sessionmaker bound to engine.
+
+    Accepts an Engine instance, a database URL string, or None (in which case
+    create_db_engine() is called with default settings).
+    """
+    if isinstance(engine, str):
+        eng = create_db_engine(engine)
+    elif engine is None:
+        eng = create_db_engine()
+    else:
+        eng = engine
     return sessionmaker(bind=eng, autoflush=False, autocommit=False, expire_on_commit=False)
 
 

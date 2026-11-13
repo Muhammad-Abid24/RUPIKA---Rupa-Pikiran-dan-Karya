@@ -285,9 +285,10 @@ def get_review_service(session_factory: Optional[Callable[[], Session]] = None) 
         _default_review_service = ReviewService(session_factory)
     elif _default_review_service is None:
         from stockforge.config import get_settings
-        from stockforge.db.session import create_session_factory
+        from stockforge.db.session import create_db_engine, create_session_factory
         settings = get_settings()
-        _default_review_service = ReviewService(create_session_factory(settings.database_url))
+        engine = create_db_engine(settings.database_url)
+        _default_review_service = ReviewService(create_session_factory(engine))
     return _default_review_service
 
 

@@ -426,3 +426,23 @@ def test_request_full_resolution_image(review_env, monkeypatch):
     _, kwargs = cb_update.callback_query.message.reply_document.call_args
     assert kwargs["filename"] == asset.filename
     assert "2000x2000 px" in kwargs["caption"]
+
+
+def test_get_review_service_default_initialization(tmp_path: Path, monkeypatch):
+    """Verify get_review_service initializes cleanly with settings database_url string."""
+    import stockforge.bot.review as review_mod
+    review_mod._default_review_service = None
+
+    db_path = tmp_path / "default_init.db"
+    db_url = f"sqlite:///{db_path}"
+    monkeypatch.setenv("DATABASE_URL", db_url)
+
+    from stockforge.db.models import Base
+    from stockforge.db.session import create_db_engine
+    Base.metadata.create_all(create_db_engine(db_url))
+
+    # Call get_review_service with None, ensuring it builds sessionmaker without error
+    srv = get_review_service()
+    assert srv is not None
+    # Verify DB query works through the created sessionmaker without AttributeError: 'str' object has no attribute 'connect'
+    assert srv.get_pending_asset(1) is None
