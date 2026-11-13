@@ -1,4 +1,5 @@
-"""StockForge / RUPIKA Research, Planning, and Generation Gate Module (SF-006, SF-020)."""
+"""StockForge / RUPIKA Research, Planning, and Generation Gate Module (SF-006, SF-020, SF-022)."""
+from stockforge.research.cron import format_schedule_key, is_cron_match, parse_cron_field
 from stockforge.research.gate import (
     GenerationGate,
     GenerationGateBlockedError,
@@ -16,6 +17,7 @@ from stockforge.research.planner import (
     ProductionPlanner,
     compute_plan_hash,
 )
+from stockforge.research.scheduler import AutoResearchScheduler
 from stockforge.research.service import (
     ConceptApprovalError,
     DuplicateConceptError,
@@ -47,4 +49,8 @@ __all__ = [
     "GenerationGateBlockedError",
     "PlanAlreadyConsumedError",
     "PlanExpiredError",
+    "AutoResearchScheduler",
+    "is_cron_match",
+    "parse_cron_field",
+    "format_schedule_key",
 ]
