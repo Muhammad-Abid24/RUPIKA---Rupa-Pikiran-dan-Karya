@@ -211,22 +211,66 @@ Periksa kredensial, saldo/budget, model ID, endpoint, rate limit, timeout, dan f
 
 ```text
 RUPIKA-BOT/
-├── stockforge/          # Kode aplikasi dan modul workflow
-│   └── bot/             # Integrasi Telegram
-├── tests/               # Pengujian
-├── config/              # Konfigurasi pendukung
-├── alembic/             # Migrasi database
-├── deploy/              # Utilitas deployment/backup (jika tersedia)
-├── compose.yaml         # Docker Compose utama
-├── compose.dev.yaml     # Override pengembangan
-├── pyproject.toml       # Metadata dan dependency Python
-├── uv.lock              # Dependency lockfile
-├── .env.example         # Contoh konfigurasi
-├── ARCHITECTURE.md      # Arsitektur teknis
-├── AGENT.md             # Petunjuk pengembangan untuk AI agent
-├── KANBAN.md            # Status pekerjaan
-├── BACKLOG.md           # Rencana pengembangan
-└── TASK.md              # Detail tugas
+├── alembic/                     # Migrasi database
+│   ├── versions/                # Riwayat revisi migrasi
+│   ├── env.py                   # Konfigurasi migrasi
+│   └── script.py.mako           # Template migrasi
+│
+├── config/                      # Konfigurasi workflow
+│   ├── models.yaml              # Konfigurasi model AI
+│   └── research.yaml            # Konfigurasi riset niche
+│
+├── deploy/                      # Deployment dan pemulihan
+│   ├── backup.sh                # Script backup
+│   ├── restore.sh               # Script restore
+│   └── rollback.md              # Panduan rollback
+│
+├── stockforge/                  # Package utama RUPIKA
+│   ├── __pycache__/             # Cache Python (lokal)
+│   ├── bot/                     # Integrasi Telegram
+│   │   ├── __init__.py
+│   │   ├── auth.py              # Autentikasi dan izin akses
+│   │   ├── handlers.py          # Handler perintah utama
+│   │   ├── progress_handlers.py # Handler status progres
+│   │   ├── progress.py          # Pembaruan progres
+│   │   ├── research_handlers.py # Handler riset niche
+│   │   ├── review.py            # Review dan approval
+│   │   └── service.py           # Lifecycle Telegram bot
+│   │
+│   ├── budget/                  # Kontrol anggaran AI
+│   ├── db/                      # Database dan model
+│   ├── errors/                  # Penanganan error
+│   ├── eta/                     # Estimasi waktu proses
+│   ├── export/                  # Ekspor aset dan metadata
+│   ├── images/                  # Generasi dan pemrosesan gambar
+│   ├── ops/                     # Operasional dan healthcheck
+│   ├── providers/               # Integrasi provider AI
+│   ├── qc/                      # Quality control
+│   ├── queue/                   # Antrean pekerjaan
+│   ├── research/                # Riset niche
+│   ├── storage/                 # Penyimpanan aset
+│   ├── __init__.py
+│   ├── cli.py                   # Entry point CLI
+│   ├── config.py                # Pengaturan aplikasi
+│   └── logging.py               # Konfigurasi logging
+│
+├── .dockerignore                # File yang diabaikan Docker
+├── .env.example                 # Template environment
+├── .gitignore                   # File yang diabaikan Git
+├── AGENT.md                     # Instruksi AI coding agent
+├── alembic.ini                  # Konfigurasi Alembic
+├── ARCHITECTURE.md              # Dokumentasi arsitektur
+├── BACKLOG.md                   # Rencana pengembangan
+├── compose.dev.yaml             # Docker Compose development
+├── compose.yaml                 # Docker Compose utama
+├── Dockerfile                   # Build image Docker
+├── KANBAN.md                    # Status pengerjaan
+├── pyproject.toml               # Dependency Python
+├── README-IMPLEMENTATION.md     # Catatan implementasi
+├── README.md                    # Dokumentasi utama GitHub
+├── TASK.md                      # Detail pekerjaan
+└── uv.lock                      # Lockfile dependency
+
 ```
 
 ## Kontribusi
@@ -237,7 +281,12 @@ Sebelum mengirim pull request, jalankan pengujian yang relevan dan pastikan peru
 
 ## Lisensi
 
-Lihat file `LICENSE` pada repository jika tersedia. **Jika belum ada lisensi, repository publik tidak otomatis memberikan izin untuk menyalin, memodifikasi, atau mendistribusikan kode.** Pemilik proyek perlu menentukan lisensi yang sesuai.
+RUPIKA — Rupa, Pikiran, dan Karya is licensed
+under the MIT License.
+
+Copyright (c) 2026 Muhammad Abid.
+
+See the [LICENSE](LICENSE) file for details.
 
 ---
 
