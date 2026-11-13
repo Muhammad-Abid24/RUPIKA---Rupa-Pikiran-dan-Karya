@@ -1,6 +1,7 @@
 """Telegram bot application lifecycle and error handling service (SF-003)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
@@ -25,6 +26,7 @@ class BotService:
         )
         self.token = raw_token
         self.conflict_detected = False
+        self.conflict_count = 0
 
     def build_application(self) -> Application:
         """Configure Application with handlers and conflict-aware error handling."""
