@@ -1,6 +1,7 @@
 """Telegram visual review and human approval workflow (SF-011)."""
 from __future__ import annotations
 
+import html
 import json
 import logging
 import time
@@ -135,19 +136,19 @@ class ReviewService:
         score_display = f"{vision_score:.2f}" if vision_score is not None else "0.00"
 
         text = (
-            f"🖼️ **Review Aset Stok #{asset.id}**\n\n"
-            f"• **File**: `{asset.filename}`\n"
-            f"• **Dimensi**: {asset.width}x{asset.height} px ({mp:.1f} MP)\n"
-            f"• **Status**: `{asset.status}`\n"
-            f"• **Judul**: {title}\n"
-            f"• **Kategori**: {cat_id} ({cat_name})\n"
-            f"• **Keywords ({keywords_count})**: _{top_keywords_str}_\n\n"
-            f"📋 **Hasil Quality Control (QC)**:\n"
-            f"• Det. Checks: {qc_det_summary}\n"
+            f"🖼️ <b>Review Aset Stok #{asset.id}</b>\n\n"
+            f"• <b>File</b>: <code>{html.escape(asset.filename or '')}</code>\n"
+            f"• <b>Dimensi</b>: {asset.width}x{asset.height} px ({mp:.1f} MP)\n"
+            f"• <b>Status</b>: <code>{html.escape(asset.status)}</code>\n"
+            f"• <b>Judul</b>: {html.escape(title)}\n"
+            f"• <b>Kategori</b>: {cat_id} ({html.escape(cat_name)})\n"
+            f"• <b>Keywords ({keywords_count})</b>: <i>{html.escape(top_keywords_str)}</i>\n\n"
+            f"📋 <b>Hasil Quality Control (QC)</b>:\n"
+            f"• Det. Checks: {html.escape(qc_det_summary)}\n"
             f"• Vision QC: {'✅ Lolos' if vision_passed else '❌ Flagged'} "
             f"(Score: {score_display})\n"
-            f"• Isu Visual: {vision_issues_str}\n\n"
-            f"⚠️ *{VISION_QC_DISCLAIMER}*"
+            f"• Isu Visual: {html.escape(vision_issues_str)}\n\n"
+            f"⚠️ <i>{html.escape(VISION_QC_DISCLAIMER)}</i>"
         )
 
 
@@ -322,7 +323,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                 await update.effective_message.reply_photo(
                     photo=f,
                     caption=summary_text,
-                    parse_mode=ParseMode.MARKDOWN,
+                    parse_mode=ParseMode.HTML,
                     reply_markup=markup,
                 )
             return
@@ -331,11 +332,18 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     # Fallback jika file fisik tidak ada atau terjadi kendala media
     if update.effective_message:
-        await update.effective_message.reply_text(
-            summary_text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=markup,
-        )
+        try:
+            await update.effective_message.reply_text(
+                summary_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup,
+            )
+        except Exception as e:
+            logger.error("Gagal mengirim pesan review dengan HTML: %s. Mengirim teks polos.", e)
+            await update.effective_message.reply_text(
+                summary_text,
+                reply_markup=markup,
+            )
 
 
 @require_admin
@@ -429,21 +437,26 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     emoji = decision_emojis.get(res.decision, "🏁")
     time_str = utc_now().strftime("%Y-%m-%d %H:%M:%S")
 
-    summary_note = f"\n\n{emoji} **Keputusan**: `{res.decision.upper()}` oleh {user_name} ({time_str} UTC)"
+    user_label = html.escape(user_name or "Admin")
+    summary_note = f"\n\n{emoji} <b>Keputusan</b>: <code>{html.escape(res.decision.upper())}</code> oleh {user_label} ({time_str} UTC)"
 
     try:
         # If it's a photo caption
         if query.message.caption:
+            caption_html = getattr(query.message, "caption_html", None)
+            base_caption = caption_html if isinstance(caption_html, str) else html.escape(query.message.caption or "")
             await query.edit_message_caption(
-                caption=query.message.caption + summary_note,
-                parse_mode=ParseMode.MARKDOWN,
+                caption=base_caption + summary_note,
+                parse_mode=ParseMode.HTML,
                 reply_markup=None,  # Disables further clicks
             )
         else:
             # If it's a text message
+            text_html = getattr(query.message, "text_html", None)
+            base_text = text_html if isinstance(text_html, str) else html.escape(query.message.text or "")
             await query.edit_message_text(
-                text=query.message.text + summary_note,
-                parse_mode=ParseMode.MARKDOWN,
+                text=base_text + summary_note,
+                parse_mode=ParseMode.HTML,
                 reply_markup=None,  # Disables further clicks
             )
     except Exception as e:
