@@ -479,3 +479,4 @@ class VisionQcService:
                 requires_review,
             )
             return meta_record
+
