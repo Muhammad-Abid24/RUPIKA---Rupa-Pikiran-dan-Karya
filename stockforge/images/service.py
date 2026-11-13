@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any, Callable, Dict, List, Optional
 from pathlib import Path
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stockforge.db.models import Asset
@@ -184,6 +185,11 @@ class ImageGenerationService:
         # 5. Persist Asset to database within transaction
         session = self.session_factory()
         try:
+            existing_asset = session.scalar(select(Asset).where(Asset.sha256 == sha256_hash))
+            if existing_asset:
+                logger.info("Aset dengan SHA-256 identik sudah ada (Asset #%d). Menggunakan aset yang sudah terdaftar.", existing_asset.id)
+                return existing_asset
+
             asset = Asset(
                 job_id=job_id,
                 filename=dest_path.name,

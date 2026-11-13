@@ -92,8 +92,10 @@ class MockImageProvider(ImageProvider):
         g = (90 + call_idx * 23) % 256
         b = (120 + call_idx * 29) % 256
         img = Image.new("RGB", (width, height), color=(r, g, b))
-        # Ensure distinct bytes by setting varied pixel based on prompt and call index
-        img.putpixel((0, 0), (call_idx % 256, (call_idx * 7) % 256, (call_idx * 13) % 256))
+        # Ensure distinct bytes by setting varied pixels based on uuid and call index
+        u_bytes = uuid.uuid4().bytes
+        for i, byte_val in enumerate(u_bytes):
+            img.putpixel((i, 0), (byte_val, (byte_val * 7) % 256, (byte_val * 13) % 256))
         buf = io.BytesIO()
         img.save(buf, format="JPEG", quality=85)
         jpeg_bytes = buf.getvalue()

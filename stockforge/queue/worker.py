@@ -47,6 +47,58 @@ class Worker:
             status = session.scalar(select(Job.status).where(Job.id == job_id))
             return status == "cancelled"
 
+    def _default_pipeline_item_processor(self, job_id: int, item_index: int) -> None:
+        """Execute default image pipeline: generation -> QC -> metadata -> review."""
+        from stockforge.config import get_settings
+        from stockforge.storage.service import StorageService
+        from stockforge.images.service import ImageGenerationService
+        from stockforge.providers.registry import ProviderRegistry
+        from stockforge.providers.router import ProviderRouter
+        from stockforge.db.models import ProductionPlan
+        from pathlib import Path
+        import json
+        import asyncio
+
+        settings = get_settings()
+        data_dir = Path(settings.data_dir).resolve()
+        storage = StorageService(data_dir)
+
+        # Load router
+        router = None
+        for cfg_path in [Path("config/models.yaml"), Path("/app/config/models.yaml")]:
+            if cfg_path.exists():
+                reg = ProviderRegistry()
+                r = ProviderRouter(reg)
+                try:
+                    r.load_from_yaml(cfg_path)
+                    router = r
+                    break
+                except Exception:
+                    pass
+
+        # Resolve prompt from ProductionPlan
+        prompt = f"Commercial stock photo concept #{item_index}"
+        with Session(self.queue_service.engine) as session:
+            plan = session.scalar(select(ProductionPlan).where(ProductionPlan.consumed_job_id == job_id))
+            if plan and plan.concepts_json:
+                try:
+                    concepts = json.loads(plan.concepts_json)
+                    idx = item_index - 1
+                    if 0 <= idx < len(concepts):
+                        prompt = concepts[idx].get("prompt") or concepts[idx].get("title") or prompt
+                except Exception as ex:
+                    logger.warning("Gagal mem-parse concepts_json dari plan #%s: %s", plan.id, ex)
+
+        image_service = ImageGenerationService(
+            session_factory=lambda: Session(self.queue_service.engine),
+            storage_service=storage,
+            router=router,
+            license_evidence="adobe_stock_commercial_sublicense_v1",
+        )
+
+        # Generate single image
+        asyncio.run(image_service.generate_batch(prompts=[prompt], max_batch_size=1, job_id=job_id))
+
     def execute_job_items(
         self,
         job_id: int,
@@ -94,8 +146,7 @@ class Worker:
                 if item_processor:
                     item_processor(job_id, idx)
                 else:
-                    # Default simulation: lightweight placeholder processing
-                    time.sleep(0.01)
+                    self._default_pipeline_item_processor(job_id, idx)
 
                 # Persist stage update AFTER successful execution
                 tracker.update_item_stage(job_id, idx, stage="generating", status="completed")

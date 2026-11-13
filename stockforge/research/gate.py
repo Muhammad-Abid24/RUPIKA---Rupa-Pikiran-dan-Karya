@@ -124,6 +124,16 @@ class GenerationGate:
                 operation_id=operation_id,
             )
 
+            # Initialize job items for accurate progress tracking
+            from stockforge.queue.tracker import ItemProgressTracker
+            tracker = ItemProgressTracker(self.session_factory)
+            total_items = max(1, plan.image_count)
+            tracker.initialize_job_items(
+                job_id=job.id,
+                total_items=total_items,
+                initial_stage="generating",
+            )
+
             # 3. Atomically bind job and mark plan consumed
             plan.status = "consumed"
             plan.consumed_job_id = job.id
