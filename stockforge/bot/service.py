@@ -54,6 +54,7 @@ class BotService:
 
         from stockforge.bot.progress_handlers import (
             failed_command,
+            jobs_command,
             providers_command,
             retry_callback_handler,
             retry_command,
@@ -97,6 +98,9 @@ class BotService:
         async def _status_handler(u, c):
             await status_command(u, c, session_factory=get_sf())
 
+        async def _jobs_handler(u, c):
+            await jobs_command(u, c, session_factory=get_sf())
+
         async def _failed_handler(u, c):
             await failed_command(u, c, session_factory=get_sf())
 
@@ -129,6 +133,7 @@ class BotService:
             await settings_command(u, c, session_factory=get_sf())
 
         app.add_handler(CommandHandler("status", _status_handler))
+        app.add_handler(CommandHandler("jobs", _jobs_handler))
         app.add_handler(CommandHandler("failed", _failed_handler))
         app.add_handler(CommandHandler("retry", _retry_handler))
         app.add_handler(CommandHandler("providers", _providers_handler))

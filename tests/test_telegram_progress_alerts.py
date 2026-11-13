@@ -17,6 +17,7 @@ from stockforge.bot.progress import (
 )
 from stockforge.bot.progress_handlers import (
     failed_command,
+    jobs_command,
     providers_command,
     retry_callback_handler,
     retry_command,
@@ -380,3 +381,42 @@ async def test_providers_command_health_overview(progress_env, monkeypatch):
     assert "<code>OPENAI</code>: 🟢 <b>HEALTHY</b>" in text
     assert "<code>STABILITY</code>: 🟡 <b>COOLDOWN</b>" in text
     assert "Cooldown sisa:" in text
+
+
+@pytest.mark.anyio
+async def test_jobs_command_authorized_and_lists_jobs(progress_env, monkeypatch):
+    """Verify /jobs command displays list of recent jobs and queue status."""
+    session_factory, engine, queue_service, tracker, progress_manager = progress_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "123456")
+
+    # 1. Empty state
+    update_empty, ctx_empty = build_mock_command_update(user_id=123456, chat_id=123456)
+    await jobs_command(update_empty, ctx_empty, session_factory=session_factory)
+    assert update_empty.effective_message.reply_text.called
+    empty_text = update_empty.effective_message.reply_text.call_args[0][0]
+    assert "Belum ada antrean pekerjaan" in empty_text
+
+    # 2. Populate jobs
+    j1 = queue_service.enqueue_job(job_type="image_batch", operation_id="op_jobs_1")
+    j2 = queue_service.enqueue_job(job_type="research", operation_id="op_jobs_2")
+    with session_factory() as session:
+        job1 = session.get(Job, j1.id)
+        job1.status = "completed"
+        session.commit()
+
+    update, context = build_mock_command_update(user_id=123456, chat_id=123456)
+    await jobs_command(update, context, session_factory=session_factory)
+
+    assert update.effective_message.reply_text.called
+    text = update.effective_message.reply_text.call_args[0][0]
+    assert "Daftar Pekerjaan & Antrean Batch" in text
+    assert f"Batch #{j1.id}" in text
+    assert f"Batch #{j2.id}" in text
+    assert "/status" in text
+    assert "/review" in text
+
+    # 3. Unauthorized request
+    unauth_update, unauth_ctx = build_mock_command_update(user_id=999999, chat_id=999999)
+    await jobs_command(unauth_update, unauth_ctx, session_factory=session_factory)
+    unauth_text = unauth_update.effective_message.reply_text.call_args[0][0]
+    assert "Akses ditolak" in unauth_text

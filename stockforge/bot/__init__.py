@@ -8,6 +8,7 @@ from stockforge.bot.progress import (
 )
 from stockforge.bot.progress_handlers import (
     failed_command,
+    jobs_command,
     providers_command,
     retry_callback_handler,
     retry_command,
@@ -46,6 +47,7 @@ __all__ = [
     "compute_render_hash",
     "format_progress_message",
     "status_command",
+    "jobs_command",
     "failed_command",
     "retry_command",
     "retry_callback_handler",
