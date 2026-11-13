@@ -420,3 +420,53 @@ async def test_jobs_command_authorized_and_lists_jobs(progress_env, monkeypatch)
     await jobs_command(unauth_update, unauth_ctx, session_factory=session_factory)
     unauth_text = unauth_update.effective_message.reply_text.call_args[0][0]
     assert "Akses ditolak" in unauth_text
+
+
+def test_completion_notification_idempotent_single_alert(progress_env, monkeypatch):
+    """Verify that batch completion notification is sent exactly once and recorded in JobEvent."""
+    from unittest.mock import MagicMock
+    from sqlalchemy import select
+    from stockforge.db.models import JobEvent
+    from stockforge.queue.worker import Worker
+
+    session_factory, engine, queue_service, tracker, progress_manager = progress_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "123456")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "dummy_token_123")
+
+    # Create and complete a job
+    job = queue_service.enqueue_job(job_type="image_batch", operation_id="op_single_alert_test")
+    tracker.initialize_job_items(job.id, total_items=1, initial_stage="generating")
+    tracker.update_item_stage(job.id, item_index=1, stage="metadata", status="completed")
+
+    worker = Worker(queue_service, poll_interval_seconds=1.0)
+
+    # Mock _post_telegram
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"ok": True, "result": {"message_id": 999}}
+    mock_post = MagicMock(return_value=mock_resp)
+    worker._post_telegram = mock_post
+
+    # First call with notify_completion=True (e.g. from run_once)
+    worker._publish_progress(job.id, force=True, notify_completion=True)
+
+    # Second call with notify_completion=True (e.g. if triggered again or duplicate handler)
+    worker._publish_progress(job.id, force=True, notify_completion=True)
+
+    # Verify sendMessage for completion was sent exactly once
+    completion_calls = [
+        call for call in mock_post.call_args_list
+        if "Selesai Diproduksi" in call.kwargs.get("payload", {}).get("text", "")
+    ]
+    assert len(completion_calls) == 1
+
+    # Verify JobEvent record exists
+    with session_factory() as session:
+        events = session.scalars(
+            select(JobEvent).where(
+                JobEvent.job_id == job.id,
+                JobEvent.event_type == "completion_notification_sent",
+            )
+        ).all()
+        assert len(events) == 1
+

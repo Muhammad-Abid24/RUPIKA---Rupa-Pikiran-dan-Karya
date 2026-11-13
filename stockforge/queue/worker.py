@@ -361,35 +361,53 @@ class Worker:
                     except Exception as ex:
                         logger.warning("Gagal kirim live progress awal Telegram: %s", ex)
 
-                # Send completion notice when batch finishes completely
+                # Send completion notice when batch finishes completely (strictly idempotent: at most once per job)
                 if summary.is_terminal and notify_completion:
-                    target_chat = record.chat_id if record else admin_ids[0]
-                    try:
-                        if summary.completed_count > 0:
-                            completion_text = (
-                                f"🎉 <b>Batch #{job_id} Selesai Diproduksi!</b>\n\n"
-                                f"• <b>Total Gambar:</b> {summary.total_items}\n"
-                                f"• <b>Berhasil:</b> {summary.completed_count}\n"
-                                f"• <b>Status:</b> Siap untuk ditinjau visual\n\n"
-                                f"👉 Ketik <code>/review {job_id}</code> untuk memulai review aset stok."
-                            )
-                        else:
-                            completion_text = (
-                                f"⚠️ <b>Batch #{job_id} Telah Berakhir</b>\n\n"
-                                f"• <b>Gagal:</b> {summary.failed_count} dari {summary.total_items} gambar\n"
-                                f"Gunakan <code>/failed {job_id}</code> untuk rincian error."
-                            )
-                        self._post_telegram(
-                            token=token,
-                            method="sendMessage",
-                            payload={
-                                "chat_id": target_chat,
-                                "text": completion_text,
-                                "parse_mode": "HTML",
-                            },
+                    import json
+                    from stockforge.db.models import JobEvent
+                    already_notified = session.scalar(
+                        select(JobEvent).where(
+                            JobEvent.job_id == job_id,
+                            JobEvent.event_type == "completion_notification_sent",
                         )
-                    except Exception as ex:
-                        logger.warning("Gagal kirim notifikasi batch selesai: %s", ex)
+                    )
+                    if not already_notified:
+                        target_chat = record.chat_id if record else admin_ids[0]
+                        try:
+                            if summary.completed_count > 0:
+                                completion_text = (
+                                    f"🎉 <b>Batch #{job_id} Selesai Diproduksi!</b>\n\n"
+                                    f"• <b>Total Gambar:</b> {summary.total_items}\n"
+                                    f"• <b>Berhasil:</b> {summary.completed_count}\n"
+                                    f"• <b>Status:</b> Siap untuk ditinjau visual\n\n"
+                                    f"👉 Ketik <code>/review {job_id}</code> untuk memulai review aset stok."
+                                )
+                            else:
+                                completion_text = (
+                                    f"⚠️ <b>Batch #{job_id} Telah Berakhir</b>\n\n"
+                                    f"• <b>Gagal:</b> {summary.failed_count} dari {summary.total_items} gambar\n"
+                                    f"Gunakan <code>/failed {job_id}</code> untuk rincian error."
+                                )
+                            resp = self._post_telegram(
+                                token=token,
+                                method="sendMessage",
+                                payload={
+                                    "chat_id": target_chat,
+                                    "text": completion_text,
+                                    "parse_mode": "HTML",
+                                },
+                            )
+                            if resp is not None and resp.status_code == 200:
+                                ev = JobEvent(
+                                    job_id=job_id,
+                                    event_type="completion_notification_sent",
+                                    payload_json=json.dumps({"chat_id": target_chat, "at": now.isoformat()}),
+                                    created_at=now,
+                                )
+                                session.add(ev)
+                                session.commit()
+                        except Exception as ex:
+                            logger.warning("Gagal kirim notifikasi batch selesai: %s", ex)
         except Exception as top_ex:
             logger.warning("Ekspepsi saat publish progress Telegram: %s", top_ex)
 
@@ -469,7 +487,7 @@ class Worker:
                 self._send_telegram_failure_alert(job_id, idx, "generating", str(e))
 
         progress = tracker.get_batch_progress(job_id)
-        self._publish_progress(job_id, force=True, notify_completion=True)
+        self._publish_progress(job_id, force=True, notify_completion=False)
         if progress.reconciliation_count > 0:
             return "needs_reconciliation"
         if progress.completed_count == 0 and progress.failed_count > 0:
