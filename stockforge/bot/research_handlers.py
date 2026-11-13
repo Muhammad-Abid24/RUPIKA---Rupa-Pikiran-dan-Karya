@@ -74,11 +74,12 @@ async def research_command(
 
         # 2. Generate distinct candidates with explicit source provenance via AI router or fallback
         candidates_data = []
+        error_msg: Optional[str] = None
         if router is not None:
             from stockforge.research.service import ResearchService
             r_service = ResearchService(session_factory=session_factory, router=router)
             try:
-                discovered = await r_service.discover_niches(domain_query=topic, count=3)
+                discovered = await r_service.discover_niches(domain_query=topic, count=2)
                 for item in discovered:
                     name = item.get("name") or f"{topic} — Niche"
                     rationale = item.get("rationale") or "High commercial demand in stock marketplaces."
@@ -92,10 +93,25 @@ async def research_command(
                         "sources": sources,
                     })
             except Exception as ex:
-                logger.warning("Gagal melakukan riset via AI router, beralih ke fallback terstruktur: %s", ex)
+                error_msg = str(ex)
+                logger.error("Gagal melakukan riset via AI router: %s", ex)
 
-        if not candidates_data:
-            # Fallback structured candidates
+        # Invariant: Never display fake dummy data if live AI router fails
+        if router is not None and not candidates_data:
+            run.status = "failed"
+            session.commit()
+            if update.effective_message:
+                await update.effective_message.reply_text(
+                    f"❌ <b>Riset Pasar Gagal</b>\n\n"
+                    f"Model AI tidak dapat menyelesaikan riset untuk topik <b>{html.escape(topic)}</b>.\n"
+                    f"<b>Detail Galat:</b> <code>{html.escape(error_msg or 'Format respon AI tidak valid')}</code>\n\n"
+                    f"<i>Sistem RUPIKA tidak menampilkan data dummy tiruan. Silakan ulangi perintah atau ganti topik.</i>",
+                    parse_mode=ParseMode.HTML,
+                )
+            return
+
+        # Fallback only for unit tests where router is intentionally omitted
+        if not candidates_data and router is None:
             candidates_data = [
                 {
                     "niche_name": f"{topic} — Urban Lifestyle",

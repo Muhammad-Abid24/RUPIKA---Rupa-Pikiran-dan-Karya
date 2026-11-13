@@ -157,26 +157,42 @@ class ResearchService:
         system_prompt = (
             f"You are a commercial stock photography research analyst. "
             f"Analyze current commercial demand and suggest {count} distinct stock photo niches for: '{domain_query}'. "
-            f"Return ONLY a JSON array of objects with keys: "
+            f"Keep each rationale concise (1-2 sentences) and source_notes brief so the response is complete. "
+            f"Return ONLY a valid JSON array of objects with keys: "
             f"['name', 'priority', 'source_notes', 'rationale']. "
-            f"Do NOT invent false statistics or claim unverified partner data."
+            f"Do NOT invent false statistics or claim unverified partner data. "
+            f"Do NOT wrap with explanation or markdown formatting."
         )
 
         resp = await provider.generate_text(
             prompt=system_prompt,
             model=model,
-            max_tokens=1500,
+            max_tokens=4000,
             temperature=0.7,
         )
 
-        match = re.search(r"\[.*\]", resp.text, re.DOTALL)
-        json_str = match.group(0) if match else resp.text.strip()
+        raw = resp.text.strip()
+        if "```" in raw:
+            raw = re.sub(r"^```(?:json)?\s*", "", raw, flags=re.MULTILINE)
+            raw = re.sub(r"\s*```$", "", raw, flags=re.MULTILINE)
+
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        json_str = match.group(0) if match else raw.strip()
         try:
             niches_data = json.loads(json_str)
             if isinstance(niches_data, list):
                 return niches_data[:count]
         except Exception as e:
-            logger.error(f"Gagal mem-parse respon discovery niche: {e}")
+            # Attempt repair if closing bracket was truncated at the end
+            if json_str.rfind("}") > 0 and not json_str.endswith("]"):
+                try:
+                    repaired = json_str[:json_str.rfind("}") + 1] + "\n]"
+                    niches_data = json.loads(repaired)
+                    if isinstance(niches_data, list):
+                        return niches_data[:count]
+                except Exception:
+                    pass
+            logger.error(f"Gagal mem-parse respon discovery niche: {e} (Raw preview: {raw[:200]})")
             raise ValueError(f"Respon niche dari provider tidak valid: {e}")
 
         return []

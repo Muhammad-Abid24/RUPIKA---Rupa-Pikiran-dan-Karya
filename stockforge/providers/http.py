@@ -27,7 +27,7 @@ class HttpTextProvider(TextProvider):
         provider_name: str,
         base_url: str,
         api_key: str,
-        timeout: float = 45.0,
+        timeout: float = 60.0,
     ) -> None:
         self.provider_name = provider_name
         self.base_url = base_url.rstrip("/")
@@ -38,7 +38,7 @@ class HttpTextProvider(TextProvider):
         self,
         prompt: str,
         model: str,
-        max_tokens: int = 1500,
+        max_tokens: int = 4000,
         temperature: float = 0.7,
         operation_id: Optional[str] = None,
         **kwargs: Any,
@@ -59,7 +59,8 @@ class HttpTextProvider(TextProvider):
         sanitized_payload = redact_sensitive_data(payload)
         logger.info("Calling provider %s at %s with model %s", self.provider_name, self.base_url, model)
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        timeout_config = httpx.Timeout(connect=15.0, read=90.0, write=15.0, pool=15.0)
+        async with httpx.AsyncClient(timeout=timeout_config) as client:
             try:
                 resp = await client.post(
                     f"{self.base_url}/chat/completions",
@@ -80,12 +81,14 @@ class HttpTextProvider(TextProvider):
                 provider=self.provider_name,
                 model=model,
             )
-            raise RuntimeError(f"Provider {self.provider_name} failed: [{norm.code.value}] {norm.clean_message}")
+            raise RuntimeError(f"Provider {self.provider_name} failed: [{norm.code.value}] {norm.safe_user_message}")
 
         data = resp.json()
         choice = data.get("choices", [{}])[0]
         msg = choice.get("message", {})
-        text = msg.get("content", "")
+        text = msg.get("content") or ""
+        if not text and "reasoning_content" in msg:
+            text = msg.get("reasoning_content", "")
 
         usage = data.get("usage", {})
         prompt_tokens = usage.get("prompt_tokens", 0)
