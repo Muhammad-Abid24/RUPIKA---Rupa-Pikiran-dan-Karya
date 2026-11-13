@@ -170,11 +170,19 @@ class HttpImageProvider(ImageProvider):
         sanitized_payload = redact_sensitive_data(payload)
         logger.info("Calling image provider %s at %s with model %s", self.provider_name, self.base_url, model)
 
+        endpoint = self.base_url.rstrip("/")
+        if endpoint.endswith("/images/generations") or endpoint.endswith("/generations"):
+            url = endpoint
+        elif endpoint.endswith("/images"):
+            url = f"{endpoint}/generations"
+        else:
+            url = f"{endpoint}/images/generations"
+
         timeout_config = httpx.Timeout(connect=15.0, read=120.0, write=15.0, pool=15.0)
         async with httpx.AsyncClient(timeout=timeout_config) as client:
             try:
                 resp = await client.post(
-                    f"{self.base_url}/images/generations",
+                    url,
                     json=payload,
                     headers=headers,
                 )
