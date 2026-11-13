@@ -446,3 +446,76 @@ def test_get_review_service_default_initialization(tmp_path: Path, monkeypatch):
     assert srv is not None
     # Verify DB query works through the created sessionmaker without AttributeError: 'str' object has no attribute 'connect'
     assert srv.get_pending_asset(1) is None
+
+
+def test_review_when_generation_in_progress(review_env, monkeypatch):
+    """Verify /review notifies operator when image generation job is currently in progress."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    from stockforge.db.models import Job
+
+    # Create an active running job with no finished assets
+    with session_factory() as session:
+        job = Job(
+            id=7,
+            type="image_batch",
+            status="running",
+            operation_id="op_test_running_7",
+        )
+        session.add(job)
+        session.commit()
+
+    # Admin calls /review without arguments
+    update, context = build_mock_command_update(user_id=1001, chat_id=1001, args=[])
+    asyncio.run(review_command_handler(update, context))
+
+    assert update.effective_message.reply_text.called
+    text = update.effective_message.reply_text.call_args[0][0]
+    assert "Proses generate gambar belum selesai" in text
+    assert "/status 7" in text
+
+    # Admin calls /review 7 (referencing batch 7)
+    update7, context7 = build_mock_command_update(user_id=1001, chat_id=1001, args=["7"])
+    asyncio.run(review_command_handler(update7, context7))
+
+    assert update7.effective_message.reply_text.called
+    text7 = update7.effective_message.reply_text.call_args[0][0]
+    assert "Proses generate gambar belum selesai" in text7
+    assert "/status 7" in text7
+
+
+def test_review_by_job_id(review_env, monkeypatch):
+    """Verify /review <job_id> resolves the asset created by that batch job."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    from stockforge.db.models import Job
+
+    with session_factory() as session:
+        job = Job(
+            id=12,
+            type="image_batch",
+            status="completed",
+            operation_id="op_test_12",
+        )
+        session.add(job)
+        session.commit()
+
+    # Asset ID is 99, but its job_id is 12
+    asset = _create_test_asset_with_qc(session_factory, raw_dir, asset_id=99)
+    with session_factory() as session:
+        a = session.get(Asset, 99)
+        a.job_id = 12
+        session.commit()
+
+    # Admin calls /review 12
+    update, context = build_mock_command_update(user_id=1001, chat_id=1001, args=["12"])
+    asyncio.run(review_command_handler(update, context))
+
+    assert update.effective_message.reply_photo.called
+    caption = update.effective_message.reply_photo.call_args[1].get("caption", "")
+    assert "Review Aset Stok #99" in caption
+

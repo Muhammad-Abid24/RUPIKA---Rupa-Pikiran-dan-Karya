@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stockforge.bot.auth import require_admin
-from stockforge.db.models import Asset, AssetMetadata, QcResult, Review, TelegramUser, utc_now
+from stockforge.db.models import Asset, AssetMetadata, Job, QcResult, Review, TelegramUser, utc_now
 from stockforge.qc.vision import ADOBE_CATEGORIES, VISION_QC_DISCLAIMER
 
 logger = logging.getLogger("stockforge.bot.review")
@@ -40,25 +40,70 @@ class ReviewService:
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self.session_factory = session_factory
 
-    def get_pending_asset(self, asset_id: Optional[int] = None) -> Optional[Asset]:
-        """Fetch asset pending review by ID or retrieve the next eligible asset."""
+    def get_pending_asset(
+        self,
+        asset_id: Optional[int] = None,
+        job_id: Optional[int] = None,
+    ) -> Optional[Asset]:
+        """Fetch asset pending review by asset ID, job ID, or retrieve the next eligible asset."""
         with self.session_factory() as session:
             if asset_id is not None:
                 stmt = select(Asset).where(Asset.id == asset_id)
-            else:
+                asset = session.scalars(stmt).first()
+                if asset:
+                    _ = asset.metadata_entry
+                    _ = list(asset.qc_results)
+                    session.expunge_all()
+                    return asset
+
+            if job_id is not None:
+                stmt = (
+                    select(Asset)
+                    .where(
+                        Asset.job_id == job_id,
+                        Asset.status.in_(["qc_passed", "review_pending", "generated"]),
+                    )
+                    .order_by(Asset.id.desc())
+                    .limit(1)
+                )
+                asset = session.scalars(stmt).first()
+                if asset:
+                    _ = asset.metadata_entry
+                    _ = list(asset.qc_results)
+                    session.expunge_all()
+                    return asset
+
+            if asset_id is None and job_id is None:
                 stmt = (
                     select(Asset)
                     .where(Asset.status.in_(["qc_passed", "review_pending", "generated"]))
                     .order_by(Asset.id.desc())
                     .limit(1)
                 )
-            asset = session.scalars(stmt).first()
-            if asset:
-                # Eagerly load relationships before leaving session
-                _ = asset.metadata_entry
-                _ = list(asset.qc_results)
-                session.expunge_all()
-            return asset
+                asset = session.scalars(stmt).first()
+                if asset:
+                    _ = asset.metadata_entry
+                    _ = list(asset.qc_results)
+                    session.expunge_all()
+                    return asset
+
+            return None
+
+    def get_active_generation_job(self, job_id: Optional[int] = None) -> Optional[Job]:
+        """Fetch active image generation job currently in progress, if any."""
+        with self.session_factory() as session:
+            stmt = select(Job).where(
+                Job.type == "image_batch",
+                Job.status.in_(["pending", "reserved", "running"]),
+            )
+            if job_id is not None:
+                stmt = stmt.where(Job.id == job_id)
+            else:
+                stmt = stmt.order_by(Job.id.desc())
+            job = session.scalars(stmt).first()
+            if job:
+                session.expunge(job)
+            return job
 
     @staticmethod
     def generate_token(asset_id: int) -> str:
@@ -303,14 +348,26 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         target_id = int(context.args[0])
 
     asset = service.get_pending_asset(asset_id=target_id)
+    if not asset and target_id is not None:
+        asset = service.get_pending_asset(job_id=target_id)
+
     if not asset:
-        msg = (
-            f"Tidak ada aset #{target_id} yang dapat direview."
-            if target_id
-            else "Tidak ada aset yang menunggu review saat ini."
-        )
+        active_job = service.get_active_generation_job(job_id=target_id if target_id else None)
+        if not active_job and target_id is not None:
+            active_job = service.get_active_generation_job()
+
+        if active_job:
+            msg = (
+                f"⏳ <b>Proses generate gambar belum selesai</b> (Batch #{active_job.id}).\n\n"
+                f"Silakan periksa kemajuan dengan perintah <code>/status {active_job.id}</code>."
+            )
+        elif target_id:
+            msg = f"Tidak ada aset #{target_id} yang dapat direview."
+        else:
+            msg = "Tidak ada aset yang menunggu review saat ini."
+
         if update.effective_message:
-            await update.effective_message.reply_text(msg)
+            await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
         return
 
     token = service.generate_token(asset.id)
