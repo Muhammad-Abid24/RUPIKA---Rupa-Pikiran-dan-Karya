@@ -3,7 +3,6 @@
 /ARCHITECTURE.md
 /BACKLOG.md
 /KANBAN.md
-/README.md
 /TASK.md
 /docs/
 /.ai/
@@ -25,6 +24,7 @@ logs/
 *.log
 
 # Python & testing artifacts
+.vscode/
 __pycache__/
 *.py[cod]
 *$py.class

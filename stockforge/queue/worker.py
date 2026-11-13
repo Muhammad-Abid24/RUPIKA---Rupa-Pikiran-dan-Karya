@@ -5,7 +5,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 

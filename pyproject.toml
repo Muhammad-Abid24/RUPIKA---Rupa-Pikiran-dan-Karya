@@ -42,3 +42,7 @@ python_files = ["test_*.py"]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+
+[tool.pyright]
+venvPath = "."
+venv = ".venv"
