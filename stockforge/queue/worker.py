@@ -249,6 +249,8 @@ class Worker:
                                     record.last_render_hash = current_hash
                                     record.last_updated_at = now
                                     session.commit()
+                                else:
+                                    logger.warning("Telegram editMessageText returned %s: %s", resp.status_code, resp.text)
                             except Exception as ex:
                                 logger.warning("Gagal edit live progress Telegram: %s", ex)
                 else:
@@ -277,6 +279,8 @@ class Worker:
                                 )
                                 session.add(new_rec)
                                 session.commit()
+                        else:
+                            logger.warning("Telegram sendMessage returned %s: %s", resp.status_code, resp.text)
                     except Exception as ex:
                         logger.warning("Gagal kirim live progress awal Telegram: %s", ex)
 
@@ -423,6 +427,7 @@ class Worker:
         finally:
             if final_status != "cancelled":
                 self.queue_service.complete_job(job_id, self.worker_id, status=final_status)
+                self._publish_progress(job_id, force=True, notify_completion=True)
             self.current_job_id = None
 
         logger.info("Worker %s menyelesaikan job %s dengan status: %s", self.worker_id, job_id, final_status)

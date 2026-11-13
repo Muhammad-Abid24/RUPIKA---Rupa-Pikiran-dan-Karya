@@ -289,6 +289,7 @@ class HttpVisionProvider(VisionProvider):
             "max_completion_tokens": 2000,
             "max_new_tokens": 2000,
             "temperature": 0.2,
+            "stream": False,
         }
         sanitized_payload = redact_sensitive_data(payload)
         logger.info("Calling vision provider %s at %s with model %s", self.provider_name, self.base_url, model)

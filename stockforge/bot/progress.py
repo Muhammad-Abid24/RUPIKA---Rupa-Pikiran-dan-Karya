@@ -48,14 +48,37 @@ def format_progress_message(
     current_idx_str = f"{summary.current_item_index}/{summary.total_items}" if summary.current_item_index else f"-/{summary.total_items}"
     current_stage_str = summary.current_stage.upper() if summary.current_stage else "IDLE"
 
-    # Progress bar representation
-    filled = int(summary.success_rate_percent / 10)
-    bar = "█" * filled + "░" * (10 - filled)
+    STAGE_PROGRESS_WEIGHTS = {
+        "research": 0.05,
+        "prompt": 0.15,
+        "generating": 0.35,
+        "download": 0.55,
+        "qc": 0.70,
+        "metadata": 0.85,
+        "review": 0.95,
+    }
+
+    # Progress bar and percentage representation
+    total = max(1, summary.total_items)
+    base_pct = (summary.completed_count / total) * 100.0
+    if summary.is_terminal:
+        visual_pct = summary.success_rate_percent
+        filled = min(10, max(0, int(round(visual_pct / 10.0))))
+        bar = "█" * filled + "░" * (10 - filled)
+        progress_line = f"<b>Kemajuan:</b> <code>[{bar}]</code> {visual_pct:.1f}%"
+    else:
+        stage_key = (summary.current_stage or "").lower()
+        stage_frac = STAGE_PROGRESS_WEIGHTS.get(stage_key, 0.10)
+        item_weight = 100.0 / total
+        visual_pct = min(99.0, max(0.0, base_pct + (item_weight * stage_frac)))
+        filled = min(10, max(0, int(round(visual_pct / 10.0))))
+        bar = "█" * filled + "░" * (10 - filled)
+        progress_line = f"<b>Kemajuan:</b> <code>[{bar}]</code> {visual_pct:.1f}% (Berhasil: {summary.success_rate_percent:.1f}%)"
 
     lines = [
         f"{status_icon} <b>Progress Batch #{summary.job_id} ({html.escape(job_type)})</b>",
         f"<b>Status:</b> {html.escape(status_label)}",
-        f"<b>Kemajuan:</b> <code>[{bar}]</code> {summary.success_rate_percent:.1f}%",
+        progress_line,
         "",
         f"• <b>Gambar Aktif:</b> <code>{html.escape(current_idx_str)}</code> (Tahap: <code>{html.escape(current_stage_str)}</code>)",
         f"• <b>Berhasil:</b> <code>{summary.completed_count}</code> / {summary.total_items}",
