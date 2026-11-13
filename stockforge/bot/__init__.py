@@ -1,4 +1,4 @@
-"""Bot package for RUPIKA (SF-003, SF-011, SF-019)."""
+"""Bot package for RUPIKA (SF-003, SF-011, SF-019, SF-021)."""
 from stockforge.bot.auth import is_authorized_user, is_private_chat, require_admin
 from stockforge.bot.handlers import get_main_keyboard, health_handler, help_handler, start_handler
 from stockforge.bot.progress import (
@@ -12,6 +12,13 @@ from stockforge.bot.progress_handlers import (
     retry_callback_handler,
     retry_command,
     status_command,
+)
+from stockforge.bot.research_handlers import (
+    research_callback_handler,
+    research_command,
+    researchhistory_command,
+    researchmode_command,
+    settings_command,
 )
 from stockforge.bot.review import (
     ReviewResult,
@@ -43,6 +50,11 @@ __all__ = [
     "retry_command",
     "retry_callback_handler",
     "providers_command",
+    "research_command",
+    "research_callback_handler",
+    "researchmode_command",
+    "researchhistory_command",
+    "settings_command",
     "BotService",
     "start_bot",
 ]

@@ -49,10 +49,25 @@ class BotService:
             retry_command,
             status_command,
         )
+        from stockforge.bot.research_handlers import (
+            research_callback_handler,
+            research_command,
+            researchhistory_command,
+            researchmode_command,
+            settings_command,
+        )
+        from stockforge.queue.service import QueueService
+        from stockforge.research.gate import GenerationGate
+        from stockforge.research.planner import ProductionPlanner
 
         def get_sf():
             from stockforge.db.session import create_session_factory
             return create_session_factory()
+
+        def get_queue():
+            from stockforge.config import get_settings
+            from stockforge.db.session import create_db_engine
+            return QueueService(engine=create_db_engine(get_settings().database_url))
 
         async def _status_handler(u, c):
             await status_command(u, c, session_factory=get_sf())
@@ -69,14 +84,38 @@ class BotService:
         async def _providers_handler(u, c):
             await providers_command(u, c)
 
+        async def _research_cmd(u, c):
+            await research_command(u, c, session_factory=get_sf())
+
+        async def _research_cb(u, c):
+            sf = get_sf()
+            q = get_queue()
+            g = GenerationGate(sf, q)
+            p = ProductionPlanner(sf)
+            await research_callback_handler(u, c, session_factory=sf, queue_service=q, gate=g, planner=p)
+
+        async def _researchmode_cmd(u, c):
+            await researchmode_command(u, c, session_factory=get_sf())
+
+        async def _researchhistory_cmd(u, c):
+            await researchhistory_command(u, c, session_factory=get_sf())
+
+        async def _settings_cmd(u, c):
+            await settings_command(u, c, session_factory=get_sf())
+
         app.add_handler(CommandHandler("status", _status_handler))
         app.add_handler(CommandHandler("failed", _failed_handler))
         app.add_handler(CommandHandler("retry", _retry_handler))
         app.add_handler(CommandHandler("providers", _providers_handler))
+        app.add_handler(CommandHandler("research", _research_cmd))
+        app.add_handler(CommandHandler("researchmode", _researchmode_cmd))
+        app.add_handler(CommandHandler("researchhistory", _researchhistory_cmd))
+        app.add_handler(CommandHandler("settings", _settings_cmd))
 
         # Register callback query handlers
         app.add_handler(CallbackQueryHandler(review_callback_handler, pattern=r"^rev:"))
         app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_"))
+        app.add_handler(CallbackQueryHandler(_research_cb, pattern=r"^rsh:"))
 
 
         # Register global error handler with 409 Conflict detection
