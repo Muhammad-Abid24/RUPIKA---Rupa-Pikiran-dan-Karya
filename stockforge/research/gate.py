@@ -153,3 +153,4 @@ class GenerationGate:
                 actor_telegram_id,
             )
             return job
+

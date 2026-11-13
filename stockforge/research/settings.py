@@ -132,3 +132,4 @@ class ResearchSettingsManager:
                 f"Batas anggaran harian riset terlampaui! Batas: {limit_cents} sen, "
                 f"Terpakai hari ini: {spent_today} sen, Diminta: {estimated_cost_cents} sen."
             )
+

@@ -192,3 +192,4 @@ class ProductionPlanner:
             session.refresh(plan)
             logger.warning("Plan #%s DIREVOKASI: %s", plan.id, reason)
             return plan
+

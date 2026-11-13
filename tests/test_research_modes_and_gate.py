@@ -278,3 +278,4 @@ def test_generation_gate_single_use_consumption_and_replay_protection(research_g
     with session_factory() as session:
         total_jobs = session.query(Job).count()
         assert total_jobs == 1
+
