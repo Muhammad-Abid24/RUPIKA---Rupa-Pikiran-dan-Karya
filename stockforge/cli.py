@@ -218,8 +218,8 @@ def bot_command(
         help="Telegram bot token. Defaults to TELEGRAM_BOT_TOKEN from environment.",
     ),
     drop_pending_updates: bool = typer.Option(
-        True,
-        "--drop-pending-updates/--no-drop-pending-updates",
+        False,
+        "--drop-pending-updates",
         help="Drop stale pending updates accumulated while offline.",
     ),
 ) -> None:

@@ -39,11 +39,18 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
     if update.effective_message:
-        await update.effective_message.reply_text(
-            text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_main_keyboard(),
-        )
+        try:
+            await update.effective_message.reply_text(
+                text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_main_keyboard(),
+            )
+        except Exception as send_err:
+            logger.warning("Gagal kirim pesan start dengan Markdown: %s. Mengirim teks biasa.", send_err)
+            await update.effective_message.reply_text(
+                text,
+                reply_markup=get_main_keyboard(),
+            )
 
 
 @require_admin
@@ -64,11 +71,18 @@ async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
     if update.effective_message:
-        await update.effective_message.reply_text(
-            text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_main_keyboard(),
-        )
+        try:
+            await update.effective_message.reply_text(
+                text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_main_keyboard(),
+            )
+        except Exception as send_err:
+            logger.warning("Gagal kirim pesan start dengan Markdown: %s. Mengirim teks biasa.", send_err)
+            await update.effective_message.reply_text(
+                text,
+                reply_markup=get_main_keyboard(),
+            )
 
 
 @require_admin
@@ -109,9 +123,16 @@ async def health_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
     if update.effective_message:
-        await update.effective_message.reply_text(
-            text,
-            parse_mode=ParseMode.MARKDOWN,
-            reply_markup=get_main_keyboard(),
-        )
+        try:
+            await update.effective_message.reply_text(
+                text,
+                parse_mode=ParseMode.MARKDOWN,
+                reply_markup=get_main_keyboard(),
+            )
+        except Exception as send_err:
+            logger.warning("Gagal kirim pesan start dengan Markdown: %s. Mengirim teks biasa.", send_err)
+            await update.effective_message.reply_text(
+                text,
+                reply_markup=get_main_keyboard(),
+            )
 

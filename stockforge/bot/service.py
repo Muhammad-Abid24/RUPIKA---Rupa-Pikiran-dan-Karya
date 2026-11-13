@@ -44,7 +44,12 @@ class BotService:
             .read_timeout(30.0)
             .write_timeout(30.0)
             .pool_timeout(30.0)
+            .get_updates_connect_timeout(30.0)
             .get_updates_read_timeout(45.0)
+            .get_updates_write_timeout(30.0)
+            .get_updates_pool_timeout(30.0)
+            .connection_pool_size(16)
+            .get_updates_connection_pool_size(8)
             .build()
         )
 
@@ -179,18 +184,73 @@ class BotService:
             else:
                 logger.error("Galat tak terduga pada bot Telegram: %s", err, exc_info=True)
 
+            # Inform user if this error occurred during handling an update
+            from telegram import Update
+            if update and isinstance(update, Update) and update.effective_message:
+                try:
+                    await update.effective_message.reply_text(
+                        "⚠️ Terjadi kendala saat memproses permintaan Anda. Silakan coba beberapa saat lagi."
+                    )
+                except Exception as reply_err:
+                    logger.debug("Tidak dapat mengirim pesan error fallback ke user: %s", reply_err)
+
         app.add_error_handler(error_handler)
         return app
 
-    def run_polling(self, drop_pending_updates: bool = True) -> None:
+    def run_polling(
+        self,
+        drop_pending_updates: bool = False,
+        bootstrap_retries: int = -1,
+        poll_interval: float = 0.5,
+        timeout: int = 20,
+    ) -> None:
         """Start long polling with graceful shutdown on conflict."""
         app = self.build_application()
-        logger.info("Memulai Telegram bot polling (drop_pending_updates=%s)...", drop_pending_updates)
-        app.run_polling(drop_pending_updates=drop_pending_updates)
+        logger.info(
+            "Memulai Telegram bot polling (drop_pending_updates=%s, bootstrap_retries=%s)...",
+            drop_pending_updates,
+            bootstrap_retries,
+        )
+        app.run_polling(
+            drop_pending_updates=drop_pending_updates,
+            bootstrap_retries=bootstrap_retries,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
 
 
-def start_bot(token: Optional[str] = None, drop_pending_updates: bool = True) -> None:
-    """Entry point to launch the bot service."""
+def start_bot(
+    token: Optional[str] = None,
+    drop_pending_updates: bool = False,
+) -> None:
+    """Entry point to launch the bot service with connection resilience."""
+    import time
+
     service = BotService(token=token)
-    service.run_polling(drop_pending_updates=drop_pending_updates)
+    attempt = 0
+    while True:
+        try:
+            service.run_polling(drop_pending_updates=drop_pending_updates)
+            if service.conflict_detected:
+                logger.error("Bot dihentikan karena konflik polling dengan instance lain.")
+                break
+            break
+        except (TimedOut, NetworkError, OSError) as net_err:
+            if service.conflict_detected:
+                break
+            attempt += 1
+            delay = min(2 ** attempt, 30)
+            logger.warning(
+                "Koneksi polling Telegram terganggu (%s). Menyambung kembali dalam %d detik (percobaan #%d)...",
+                net_err,
+                delay,
+                attempt,
+            )
+            time.sleep(delay)
+        except Exception as ex:
+            if "conflict" in str(ex).lower():
+                logger.critical("Konflik 409 terdeteksi saat startup: %s", ex)
+                break
+            logger.error("Galat tak terduga pada bot service: %s", ex, exc_info=True)
+            raise
 
