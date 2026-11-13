@@ -139,3 +139,4 @@ class ProviderHealthTracker:
 
 # Global tracker singleton
 default_health_tracker = ProviderHealthTracker()
+
