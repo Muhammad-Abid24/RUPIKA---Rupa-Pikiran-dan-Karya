@@ -10,3 +10,4 @@ __all__ = [
     "SingleCheckResult",
     "DISCLAIMER_TEXT",
 ]
+
