@@ -205,3 +205,4 @@ def test_double_reservation_prevented(test_db):
     service.reserve_budget(job_id=1, estimated_cost_cents=25)
     with pytest.raises(InvalidLedgerOperationError, match="sudah memiliki reservasi aktif"):
         service.reserve_budget(job_id=1, estimated_cost_cents=25)
+
