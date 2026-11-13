@@ -31,6 +31,16 @@ class BatchLimitExceededError(Exception):
     pass
 
 
+class DuplicateAssetError(Exception):
+    """Raised when an identical or perceptual near-duplicate image is generated."""
+    pass
+
+
+class PlagiarismDetectedError(Exception):
+    """Raised when an image prompt violates copyright or anti-plagiarism guardrails."""
+    pass
+
+
 class BatchGenerationResult:
     """Outcome of a batch generation run."""
 
@@ -70,6 +80,9 @@ class ImageGenerationService:
         license_evidence: str = "commercial_stock_sublicense_verified",
         min_megapixels: Optional[float] = None,
         target_megapixels: Optional[float] = None,
+        enforce_anti_plagiarism: Optional[bool] = None,
+        enforce_deduplication: Optional[bool] = None,
+        max_phash_distance: Optional[int] = None,
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage_service
@@ -81,6 +94,15 @@ class ImageGenerationService:
         settings = get_settings()
         self.min_megapixels = min_megapixels if min_megapixels is not None else settings.min_image_megapixels
         self.target_megapixels = target_megapixels if target_megapixels is not None else settings.target_image_megapixels
+        self.enforce_anti_plagiarism = (
+            enforce_anti_plagiarism if enforce_anti_plagiarism is not None else settings.enforce_anti_plagiarism
+        )
+        self.enforce_deduplication = (
+            enforce_deduplication if enforce_deduplication is not None else settings.enforce_deduplication
+        )
+        self.max_phash_distance = (
+            max_phash_distance if max_phash_distance is not None else settings.max_phash_distance
+        )
 
     def verify_commercial_license(self, model_id: str) -> str:
         """Verify that the model has verified commercial stock sublicensing rights.
@@ -167,6 +189,18 @@ class ImageGenerationService:
         # 1. Commercial license verification
         evidence = self.verify_commercial_license(model_id)
 
+        # 1b. Anti-plagiarism & copyright guardrail: sanitize prompt and inject commercial stock safety modifiers
+        from stockforge.images.guardrails import (
+            sanitize_and_enforce_plagiarism_free_prompt,
+            validate_prompt_anti_plagiarism,
+        )
+        if self.enforce_anti_plagiarism:
+            is_valid, violations = validate_prompt_anti_plagiarism(prompt)
+            if not is_valid:
+                logger.warning("Prompt asli memiliki potensi pelanggaran IP/merek: %s. Melakukan sanitasi otomatis...", violations)
+            effective_prompt = sanitize_and_enforce_plagiarism_free_prompt(prompt)
+        else:
+            effective_prompt = prompt
 
         # 2. Determine target filename
         if not filename:
@@ -174,9 +208,9 @@ class ImageGenerationService:
             filename = f"asset_{unique_suffix}.jpg"
 
         # 3. Request image generation from provider
-        logger.info("Memicu generasi gambar dengan prompt '%s' menggunakan model '%s'...", prompt[:40], model_id)
+        logger.info("Memicu generasi gambar dengan prompt '%s' menggunakan model '%s'...", effective_prompt[:40], model_id)
         resp: ProviderImageResponse = await provider.generate_image(
-            prompt=prompt,
+            prompt=effective_prompt,
             model=model_id,
             width=width,
             height=height,
@@ -198,13 +232,41 @@ class ImageGenerationService:
             category="raw",
         )
 
-        # 5. Persist Asset to database within transaction
+        # 6. Persist Asset to database within transaction with Deduplication Invariant
         session = self.session_factory()
         try:
             existing_asset = session.scalar(select(Asset).where(Asset.sha256 == sha256_hash))
             if existing_asset:
+                if self.enforce_deduplication:
+                    raise DuplicateAssetError(
+                        f"Gambar ditolak karena terdeteksi duplikasi persis (SHA-256 identik dengan Aset #{existing_asset.id})."
+                    )
                 logger.info("Aset dengan SHA-256 identik sudah ada (Asset #%d). Menggunakan aset yang sudah terdaftar.", existing_asset.id)
                 return existing_asset
+
+            if self.enforce_deduplication and phash_val:
+                import imagehash
+                try:
+                    curr_hash = imagehash.hex_to_hash(phash_val)
+                    all_existing = session.execute(select(Asset.id, Asset.phash)).all()
+                    for other_id, other_phash_str in all_existing:
+                        if other_phash_str:
+                            try:
+                                other_hash = imagehash.hex_to_hash(other_phash_str)
+                                dist = int(curr_hash - other_hash)
+                                if dist <= self.max_phash_distance:
+                                    raise DuplicateAssetError(
+                                        f"Gambar ditolak karena terdeteksi duplikasi perseptual visual "
+                                        f"(pHash Hamming distance {dist} <= {self.max_phash_distance} dengan Aset #{other_id})."
+                                    )
+                            except DuplicateAssetError:
+                                raise
+                            except Exception:
+                                continue
+                except DuplicateAssetError:
+                    raise
+                except Exception as ph_ex:
+                    logger.debug("Pemeriksaan perceptual hash dilewati: %s", ph_ex)
 
             asset = Asset(
                 job_id=job_id,

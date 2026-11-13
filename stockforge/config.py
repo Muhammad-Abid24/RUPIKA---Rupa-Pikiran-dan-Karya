@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     min_image_megapixels: float = Field(default=6.0, ge=1.0, alias="MIN_IMAGE_MEGAPIXELS")
     target_image_megapixels: float = Field(default=8.0, ge=1.0, alias="TARGET_IMAGE_MEGAPIXELS")
 
+    # Anti-plagiarism & Deduplication Rules
+    enforce_anti_plagiarism: bool = Field(default=True, alias="ENFORCE_ANTI_PLAGIARISM")
+    enforce_deduplication: bool = Field(default=True, alias="ENFORCE_DEDUPLICATION")
+    max_phash_distance: int = Field(default=5, ge=0, le=64, alias="MAX_PHASH_DISTANCE")
+
     # Hard Safety Invariants
     require_human_approval: bool = Field(default=True, alias="REQUIRE_HUMAN_APPROVAL")
     allow_adobe_auto_submission: bool = Field(default=False, alias="ALLOW_ADOBE_AUTO_SUBMISSION")

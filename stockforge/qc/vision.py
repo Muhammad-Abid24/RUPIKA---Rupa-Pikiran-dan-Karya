@@ -53,13 +53,28 @@ ADOBE_CATEGORY_NAMES: Dict[str, int] = {
     name.lower(): cat_id for cat_id, name in ADOBE_CATEGORIES.items()
 }
 
-# Anti-hallucination forbidden terms in metadata
+# Anti-hallucination and anti-plagiarism forbidden terms in metadata
 FORBIDDEN_BRAND_KEYWORDS = {
-    "apple", "iphone", "ipad", "macbook", "nike", "adidas", "samsung", "sony",
-    "canon", "nikon", "coca-cola", "cocacola", "pepsi", "starbucks", "mcdonalds",
-    "gucci", "prada", "louis vuitton", "chanel", "hermes", "rolex", "bmw",
-    "mercedes", "audi", "tesla", "ford", "toyota", "honda", "microsoft",
-    "google", "amazon", "meta", "instagram", "facebook", "twitter", "tiktok",
+    # Tech & Electronics
+    "apple", "iphone", "ipad", "macbook", "imac", "airpods", "ios", "samsung", "galaxy",
+    "sony", "playstation", "xbox", "nintendo", "switch", "microsoft", "windows", "intel",
+    "amd", "nvidia", "google", "pixel", "android", "huawei", "xiaomi", "lenovo", "dell",
+    "hp", "canon", "nikon", "panasonic", "fujifilm", "leica",
+    # Apparel & Fashion
+    "nike", "jordan", "adidas", "puma", "reebok", "under armour", "gucci", "prada",
+    "louis vuitton", "chanel", "hermes", "balenciaga", "versace", "armani", "dior",
+    "burberry", "rolex", "omega", "cartier", "zara", "hm", "uniqlo", "ray-ban", "rayban",
+    # Automotive
+    "tesla", "bmw", "mercedes", "audi", "porsche", "ferrari", "lamborghini", "toyota",
+    "honda", "ford", "chevrolet", "volkswagen", "nissan", "hyundai", "kia", "volvo",
+    # Food, Beverage & Retail
+    "coca-cola", "cocacola", "coke", "pepsi", "starbucks", "mcdonalds", "mcdonald's",
+    "burger king", "kfc", "subway", "nestle", "red bull",
+    # Social & Media Platforms
+    "instagram", "facebook", "meta", "tiktok", "twitter", "youtube", "netflix", "spotify", "amazon",
+    # Copyrighted Characters / Franchises
+    "disney", "marvel", "pixar", "star wars", "pokemon", "pikachu", "mario", "batman",
+    "superman", "spiderman", "spider-man", "mickey mouse", "barbie", "harry potter",
 }
 
 FORBIDDEN_AI_KEYWORDS = {
@@ -307,8 +322,12 @@ class VisionQcService:
         provider, model_id = self._resolve_provider_and_model(RoleType.VISION_QC, model_override)
 
         prompt = (
-            "Inspect this stock photograph for commercial quality. Check for visual defects, "
-            "anatomical distortions, blur, excessive noise, or trademarked logos. "
+            "Inspect this stock photograph for commercial quality, technical defects, and legal clearance. "
+            "1. Anti-Plagiarism & IP Clearance (STRICT): Check for any visible corporate logos, brand names, "
+            "registered trademarks, copyrighted fictional characters, celebrity likenesses, watermarks, or artist signatures. "
+            "2. Technical Quality: Check for anatomical distortions (malformed hands/fingers, distorted faces), severe blur, noise, or artifacts. "
+            "CRITICAL: If any trademark, brand logo, copyrighted character, watermark, or severe defect is detected, "
+            "you MUST mark 'passed': false, describe the issue in 'issues', and explain in 'notes'. "
             "Return JSON: {\"passed\": bool, \"confidence\": float (0.0-1.0), \"issues\": [str], \"notes\": str}"
         )
 

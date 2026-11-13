@@ -86,12 +86,25 @@ class MockImageProvider(ImageProvider):
 
         # Return a valid decodable JPEG generated via Pillow
         import io
-        from PIL import Image
+        from PIL import Image, ImageDraw
         call_idx = len(self.calls)
-        r = (60 + call_idx * 17) % 256
-        g = (90 + call_idx * 23) % 256
-        b = (120 + call_idx * 29) % 256
+        r = (60 + call_idx * 27) % 256
+        g = (90 + call_idx * 43) % 256
+        b = (120 + call_idx * 61) % 256
         img = Image.new("RGB", (width, height), color=(r, g, b))
+        draw = ImageDraw.Draw(img)
+        # Draw distinctive visual shapes so each mock call has unique pHash
+        tile_w = width // 4
+        tile_h = height // 4
+        col = (call_idx - 1) % 4
+        row = ((call_idx - 1) // 4) % 4
+        x0, y0 = col * tile_w, row * tile_h
+        draw.rectangle([(x0, y0), (x0 + tile_w, y0 + tile_h)], fill=(255, 255, 255))
+        # Draw complementary contrasting diagonal in another quadrant
+        opp_col = (col + 2) % 4
+        opp_row = (row + 2) % 4
+        opp_x0, opp_y0 = opp_col * tile_w, opp_row * tile_h
+        draw.ellipse([(opp_x0, opp_y0), (opp_x0 + tile_w, opp_y0 + tile_h)], fill=(0, 0, 0))
         # Ensure distinct bytes by setting varied pixels based on uuid and call index
         u_bytes = uuid.uuid4().bytes
         for i, byte_val in enumerate(u_bytes):
