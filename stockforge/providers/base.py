@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol, Set
+from typing import Any, Dict, List, Optional, Protocol, Set, runtime_checkable
 from pydantic import BaseModel, Field
 
 
@@ -69,6 +69,7 @@ class ProviderVisionResponse(ProviderResponse):
     passed: bool = True
 
 
+@runtime_checkable
 class TextProvider(Protocol):
     """Protocol for text/LLM completion providers."""
     async def generate_text(
@@ -83,6 +84,7 @@ class TextProvider(Protocol):
         ...
 
 
+@runtime_checkable
 class ImageProvider(Protocol):
     """Protocol for image generation providers."""
     async def generate_image(
@@ -97,6 +99,7 @@ class ImageProvider(Protocol):
         ...
 
 
+@runtime_checkable
 class VisionProvider(Protocol):
     """Protocol for vision model inspection and metadata derivation."""
     async def analyze_image(

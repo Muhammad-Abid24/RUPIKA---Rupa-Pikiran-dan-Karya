@@ -65,7 +65,30 @@ async def status_command(
     )
 
     if update.effective_message:
-        await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+        sent = await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+        if sent and update.effective_chat and not progress.is_terminal:
+            try:
+                from stockforge.bot.progress import compute_render_hash
+                from stockforge.db.models import TelegramProgressMessage, utc_now
+                with session_factory() as session:
+                    rec = session.get(TelegramProgressMessage, job_id)
+                    if rec:
+                        rec.chat_id = update.effective_chat.id
+                        rec.message_id = sent.message_id
+                        rec.last_render_hash = compute_render_hash(text)
+                        rec.last_updated_at = utc_now()
+                    else:
+                        new_rec = TelegramProgressMessage(
+                            job_id=job_id,
+                            chat_id=update.effective_chat.id,
+                            message_id=sent.message_id,
+                            last_render_hash=compute_render_hash(text),
+                            last_updated_at=utc_now(),
+                        )
+                        session.add(new_rec)
+                    session.commit()
+            except Exception as ex:
+                logger.warning("Gagal mendaftarkan TelegramProgressMessage untuk /status: %s", ex)
 
 
 @require_admin

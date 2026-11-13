@@ -104,6 +104,12 @@ class Worker:
 
         if batch_res.successful_assets:
             created_asset = batch_res.successful_assets[0]
+            tracker = ItemProgressTracker(lambda: Session(self.queue_service.engine))
+
+            # 1. Update stage to QC and publish live progress
+            tracker.update_item_stage(job_id, item_index, stage="qc", status="processing", asset_id=created_asset.id)
+            self._publish_progress(job_id, force=True)
+
             # Run deterministic QC automatically
             try:
                 from stockforge.qc.deterministic import DeterministicQcService
@@ -112,8 +118,10 @@ class Worker:
             except Exception as qc_ex:
                 logger.warning("Deterministic QC gagal untuk asset #%s: %s", created_asset.id, qc_ex)
 
-            # Attempt vision inspection and metadata generation if router is configured
+            # 2. Update stage to metadata and publish live progress if router is configured
             if router:
+                tracker.update_item_stage(job_id, item_index, stage="metadata", status="processing", asset_id=created_asset.id)
+                self._publish_progress(job_id, force=True)
                 try:
                     from stockforge.qc.vision import VisionQcService
                     vision_svc = VisionQcService(
@@ -176,6 +184,134 @@ class Worker:
         except Exception as top_ex:
             logger.warning("Ekspepsi saat menyiapkan alert Telegram: %s", top_ex)
 
+    def _publish_progress(
+        self,
+        job_id: int,
+        force: bool = False,
+        notify_completion: bool = False,
+    ) -> None:
+        """Publish or update live progress message in Telegram in real-time."""
+        from datetime import timezone
+        import httpx
+        from stockforge.config import get_settings
+        from stockforge.bot.progress import compute_render_hash, format_progress_message
+        from stockforge.db.models import TelegramProgressMessage, Job, utc_now
+        from stockforge.queue.tracker import ItemProgressTracker
+
+        try:
+            settings = get_settings()
+            token = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+            admin_ids = settings.admin_ids_list
+            if not token or not admin_ids:
+                return
+
+            tracker = ItemProgressTracker(lambda: Session(self.queue_service.engine))
+            summary = tracker.get_batch_progress(job_id)
+
+            with Session(self.queue_service.engine) as session:
+                job = session.get(Job, job_id)
+                job_type = job.type if job else "image_batch"
+                cost_cents = job.reserved_usd_cents if job else 0
+                record = session.get(TelegramProgressMessage, job_id)
+
+                text = format_progress_message(
+                    summary=summary,
+                    job_type=job_type,
+                    estimated_cost_cents=cost_cents,
+                )
+                current_hash = compute_render_hash(text)
+                now = utc_now()
+
+                if record:
+                    # Skip if text unchanged and not force
+                    if record.last_render_hash == current_hash and not force:
+                        pass
+                    else:
+                        rec_time = record.last_updated_at
+                        if rec_time.tzinfo is None:
+                            rec_time = rec_time.replace(tzinfo=timezone.utc)
+                        elapsed = (now - rec_time).total_seconds()
+
+                        # Edit message if force, terminal, or past throttle interval
+                        if force or summary.is_terminal or elapsed >= 2.0:
+                            try:
+                                resp = httpx.post(
+                                    f"https://api.telegram.org/bot{token}/editMessageText",
+                                    json={
+                                        "chat_id": record.chat_id,
+                                        "message_id": record.message_id,
+                                        "text": text,
+                                        "parse_mode": "HTML",
+                                    },
+                                    timeout=10.0,
+                                )
+                                if resp.status_code == 200:
+                                    record.last_render_hash = current_hash
+                                    record.last_updated_at = now
+                                    session.commit()
+                            except Exception as ex:
+                                logger.warning("Gagal edit live progress Telegram: %s", ex)
+                else:
+                    # Send initial message to primary admin chat
+                    target_chat = admin_ids[0]
+                    try:
+                        resp = httpx.post(
+                            f"https://api.telegram.org/bot{token}/sendMessage",
+                            json={
+                                "chat_id": target_chat,
+                                "text": text,
+                                "parse_mode": "HTML",
+                            },
+                            timeout=10.0,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            msg_id = data.get("result", {}).get("message_id")
+                            if msg_id:
+                                new_rec = TelegramProgressMessage(
+                                    job_id=job_id,
+                                    chat_id=target_chat,
+                                    message_id=msg_id,
+                                    last_render_hash=current_hash,
+                                    last_updated_at=now,
+                                )
+                                session.add(new_rec)
+                                session.commit()
+                    except Exception as ex:
+                        logger.warning("Gagal kirim live progress awal Telegram: %s", ex)
+
+                # Send completion notice when batch finishes completely
+                if summary.is_terminal and notify_completion:
+                    target_chat = record.chat_id if record else admin_ids[0]
+                    try:
+                        if summary.completed_count > 0:
+                            completion_text = (
+                                f"🎉 <b>Batch #{job_id} Selesai Diproduksi!</b>\n\n"
+                                f"• <b>Total Gambar:</b> {summary.total_items}\n"
+                                f"• <b>Berhasil:</b> {summary.completed_count}\n"
+                                f"• <b>Status:</b> Siap untuk ditinjau visual\n\n"
+                                f"👉 Ketik <code>/review {job_id}</code> untuk memulai review aset stok."
+                            )
+                        else:
+                            completion_text = (
+                                f"⚠️ <b>Batch #{job_id} Telah Berakhir</b>\n\n"
+                                f"• <b>Gagal:</b> {summary.failed_count} dari {summary.total_items} gambar\n"
+                                f"Gunakan <code>/failed {job_id}</code> untuk rincian error."
+                            )
+                        httpx.post(
+                            f"https://api.telegram.org/bot{token}/sendMessage",
+                            json={
+                                "chat_id": target_chat,
+                                "text": completion_text,
+                                "parse_mode": "HTML",
+                            },
+                            timeout=10.0,
+                        )
+                    except Exception as ex:
+                        logger.warning("Gagal kirim notifikasi batch selesai: %s", ex)
+        except Exception as top_ex:
+            logger.warning("Ekspepsi saat publish progress Telegram: %s", top_ex)
+
     def execute_job_items(
         self,
         job_id: int,
@@ -217,6 +353,7 @@ class Worker:
 
             # Persist stage update BEFORE external execution
             tracker.update_item_stage(job_id, idx, stage="generating", status="processing")
+            self._publish_progress(job_id, force=True)
 
             try:
                 # Network / processing happens outside database transaction!
@@ -228,6 +365,7 @@ class Worker:
 
                 # Persist stage update AFTER successful execution
                 tracker.update_item_stage(job_id, idx, stage="generating", status="completed", asset_id=asset_id)
+                self._publish_progress(job_id, force=True)
             except AmbiguousTimeoutError as ate:
                 logger.warning("Item %s pada job %s mengalami ambiguous timeout: %s", idx, job_id, ate)
                 tracker.update_item_stage(
@@ -250,6 +388,7 @@ class Worker:
                 self._send_telegram_failure_alert(job_id, idx, "generating", str(e))
 
         progress = tracker.get_batch_progress(job_id)
+        self._publish_progress(job_id, force=True, notify_completion=True)
         if progress.reconciliation_count > 0:
             return "needs_reconciliation"
         if progress.completed_count == 0 and progress.failed_count > 0:
