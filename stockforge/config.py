@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     daily_budget_usd: float = Field(default=3.00, ge=0.0, alias="DAILY_BUDGET_USD")
     monthly_budget_usd: float = Field(default=50.00, ge=0.0, alias="MONTHLY_BUDGET_USD")
 
+    # Image Resolution Standards (Commercial Microstock)
+    min_image_megapixels: float = Field(default=6.0, ge=1.0, alias="MIN_IMAGE_MEGAPIXELS")
+    target_image_megapixels: float = Field(default=8.0, ge=1.0, alias="TARGET_IMAGE_MEGAPIXELS")
+
     # Hard Safety Invariants
     require_human_approval: bool = Field(default=True, alias="REQUIRE_HUMAN_APPROVAL")
     allow_adobe_auto_submission: bool = Field(default=False, alias="ALLOW_ADOBE_AUTO_SUBMISSION")

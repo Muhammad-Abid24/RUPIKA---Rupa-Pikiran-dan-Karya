@@ -68,6 +68,8 @@ class ImageGenerationService:
         image_provider: Optional[ImageProvider] = None,
         default_model_id: str = "mock-image-model",
         license_evidence: str = "commercial_stock_sublicense_verified",
+        min_megapixels: Optional[float] = None,
+        target_megapixels: Optional[float] = None,
     ) -> None:
         self.session_factory = session_factory
         self.storage = storage_service
@@ -75,6 +77,10 @@ class ImageGenerationService:
         self.image_provider = image_provider
         self.default_model_id = default_model_id
         self.license_evidence = license_evidence
+        from stockforge.config import get_settings
+        settings = get_settings()
+        self.min_megapixels = min_megapixels if min_megapixels is not None else settings.min_image_megapixels
+        self.target_megapixels = target_megapixels if target_megapixels is not None else settings.target_image_megapixels
 
     def verify_commercial_license(self, model_id: str) -> str:
         """Verify that the model has verified commercial stock sublicensing rights.
@@ -177,9 +183,17 @@ class ImageGenerationService:
             operation_id=operation_id,
         )
 
-        # 4. Atomic file write & validation
+        # 4. Enforce minimum and target resolution scaling
+        from stockforge.images.scaling import scale_image_bytes_to_target
+        scaled_bytes, _, _ = scale_image_bytes_to_target(
+            image_bytes=resp.image_bytes,
+            target_megapixels=self.target_megapixels,
+            min_megapixels=self.min_megapixels,
+        )
+
+        # 5. Atomic file write & validation
         dest_path, sha256_hash, phash_val, actual_w, actual_h = self.storage.atomic_write(
-            data=resp.image_bytes,
+            data=scaled_bytes,
             filename=filename,
             category="raw",
         )

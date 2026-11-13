@@ -48,12 +48,16 @@ class DeterministicQcService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        min_megapixels: float = 4.0,
+        min_megapixels: Optional[float] = None,
         min_laplacian_variance: float = 15.0,
         max_phash_distance: int = 5,
     ) -> None:
         self.session_factory = session_factory
-        self.min_megapixels = min_megapixels
+        if min_megapixels is None:
+            from stockforge.config import get_settings
+            self.min_megapixels = get_settings().min_image_megapixels
+        else:
+            self.min_megapixels = min_megapixels
         self.min_laplacian_variance = min_laplacian_variance
         self.max_phash_distance = max_phash_distance
 
@@ -97,7 +101,7 @@ class DeterministicQcService:
             )
 
     def check_resolution(self, img: Image.Image) -> SingleCheckResult:
-        """Verify image meets commercial microstock resolution (minimum 4.0 Megapixels)."""
+        """Verify image meets commercial microstock resolution (minimum 6.0 Megapixels)."""
         width, height = img.size
         total_pixels = width * height
         megapixels = total_pixels / 1_000_000.0
