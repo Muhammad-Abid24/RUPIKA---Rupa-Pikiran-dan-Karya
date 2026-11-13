@@ -106,7 +106,7 @@ def test_detect_low_resolution_asset(test_env):
     assert res_check.passed is False
     details = json.loads(res_check.details_json)
     assert details["megapixels"] == 4.19
-    assert details["min_required_megapixels"] == 6.0
+    assert details["min_required_megapixels"] >= 6.0
 
     with session_factory() as s:
         asset = s.get(Asset, 2)

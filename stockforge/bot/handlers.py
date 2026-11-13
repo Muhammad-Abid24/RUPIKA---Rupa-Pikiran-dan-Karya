@@ -30,6 +30,8 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Handle /start command for authorized admins."""
     user = update.effective_user
     user_name = user.first_name if user else "Admin"
+    user_id = user.id if user else "Unknown"
+    logger.info("start_handler dieksekusi untuk user %s (%s)", user_id, user_name)
 
     text = (
         f"👋 Halo, **{user_name}**!\n\n"
@@ -51,6 +53,34 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
                 text,
                 reply_markup=get_main_keyboard(),
             )
+
+
+@require_admin
+async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle unknown text messages or commands so user is never left without a response."""
+    if not update.effective_message:
+        return
+    user = update.effective_user
+    user_name = user.first_name if user else "Admin"
+    user_id = user.id if user else "Unknown"
+    raw_text = (update.effective_message.text or "").strip()
+    logger.info("unknown_message_handler menerima: user=%s, text=%r", user_id, raw_text)
+
+    if raw_text.startswith("/"):
+        cmd = raw_text.split()[0]
+        await update.effective_message.reply_text(
+            f"⚠️ Perintah `{cmd}` tidak dikenali.\n\n"
+            "Ketik /help untuk melihat menu perintah yang tersedia.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_main_keyboard(),
+        )
+    else:
+        await update.effective_message.reply_text(
+            f"👋 Halo, **{user_name}**!\n\n"
+            "Perintah atau pesan teks Anda diterima. Silakan pilih menu di bawah atau ketik `/help` untuk panduan perintah.",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=get_main_keyboard(),
+        )
 
 
 @require_admin

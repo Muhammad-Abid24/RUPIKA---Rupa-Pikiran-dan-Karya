@@ -5,11 +5,27 @@ import asyncio
 import logging
 import socket
 from typing import Any, Optional, Tuple
+import httpx
+from telegram import Update
 from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
-from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    ApplicationBuilder,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    TypeHandler,
+    filters,
+)
 from telegram.request import HTTPXRequest
 
-from stockforge.bot.handlers import health_handler, help_handler, start_handler
+from stockforge.bot.handlers import (
+    health_handler,
+    help_handler,
+    start_handler,
+    unknown_message_handler,
+)
 from stockforge.bot.review import review_callback_handler, review_command_handler
 from stockforge.config import get_settings
 
@@ -38,22 +54,25 @@ class ResilientHTTPXRequest(HTTPXRequest):
     """
 
     async def do_request(self, *args: Any, **kwargs: Any) -> tuple[int, bytes]:
-        max_transient_retries = 3
+        max_transient_retries = 5
         for attempt in range(max_transient_retries):
             try:
                 return await super().do_request(*args, **kwargs)
-            except NetworkError as err:
+            except (NetworkError, TimedOut) as err:
                 err_str = str(err).lower()
-                is_stale_disconnect = (
+                is_transient = (
                     "remoteprotocolerror" in err_str
                     or "server disconnected without sending a response" in err_str
                     or "connection reset" in err_str
                     or "eof occurred in violation of protocol" in err_str
                     or "broken pipe" in err_str
+                    or "handshake" in err_str
+                    or "connect" in err_str
+                    or "timed out" in err_str
                 )
-                if is_stale_disconnect and attempt < (max_transient_retries - 1):
-                    logger.debug(
-                        "Koneksi stale terputus oleh server (%s). Melakukan retry transparan (percobaan %d/%d)...",
+                if is_transient and attempt < (max_transient_retries - 1):
+                    logger.info(
+                        "Koneksi terganggu ke server Telegram (%s). Menyambung kembali otomatis (percobaan %d/%d)...",
                         err,
                         attempt + 1,
                         max_transient_retries,
@@ -89,20 +108,34 @@ class BotService:
 
         main_request = ResilientHTTPXRequest(
             connection_pool_size=16,
-            connect_timeout=30.0,
-            read_timeout=30.0,
-            write_timeout=30.0,
-            pool_timeout=30.0,
+            connect_timeout=15.0,
+            read_timeout=20.0,
+            write_timeout=20.0,
+            pool_timeout=15.0,
             socket_options=sock_opts,
+            httpx_kwargs={
+                "limits": httpx.Limits(
+                    max_connections=16,
+                    max_keepalive_connections=4,
+                    keepalive_expiry=10.0,
+                )
+            },
         )
 
         get_updates_request = ResilientHTTPXRequest(
-            connection_pool_size=8,
-            connect_timeout=30.0,
-            read_timeout=30.0,
-            write_timeout=30.0,
-            pool_timeout=30.0,
+            connection_pool_size=1,
+            connect_timeout=15.0,
+            read_timeout=5.0,
+            write_timeout=15.0,
+            pool_timeout=15.0,
             socket_options=sock_opts,
+            httpx_kwargs={
+                "limits": httpx.Limits(
+                    max_connections=1,
+                    max_keepalive_connections=0,
+                    keepalive_expiry=5.0,
+                )
+            },
         )
 
         app = (
@@ -113,6 +146,28 @@ class BotService:
             .get_updates_request(get_updates_request)
             .build()
         )
+
+        # 0. Global logger for all incoming updates
+        async def _log_all_incoming_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            user = update.effective_user
+            chat = update.effective_chat
+            msg = update.effective_message
+            text_preview = (
+                (msg.text[:40] + "...")
+                if (msg and msg.text and len(msg.text) > 40)
+                else (msg.text if msg else None)
+            )
+            cb_data = update.callback_query.data if update.callback_query else None
+            logger.info(
+                "Update Telegram #%s diterima (chat=%s, user=%s, text=%r, callback=%r)",
+                update.update_id,
+                chat.id if chat else None,
+                user.id if user else None,
+                text_preview,
+                cb_data,
+            )
+
+        app.add_handler(TypeHandler(Update, _log_all_incoming_updates), group=-1)
 
         # Register command handlers
         app.add_handler(CommandHandler("start", start_handler))
@@ -215,6 +270,9 @@ class BotService:
         app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_"))
         app.add_handler(CallbackQueryHandler(_research_cb, pattern=r"^rsh:"))
 
+        # Register fallback message handlers for unknown commands and plain text
+        app.add_handler(MessageHandler(filters.COMMAND, unknown_message_handler))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message_handler))
 
         # Register global error handler with 409 Conflict detection
         async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -224,12 +282,18 @@ class BotService:
                 self.conflict_detected = True
                 logger.critical(
                     "Konflik polling Telegram terdeteksi (HTTP 409 Conflict): "
-                    "instance bot lain sedang aktif. Menghentikan polling secara aman..."
+                    "instance bot lain sedang aktif. Menyegarkan koneksi polling..."
                 )
                 if context.application and context.application.updater:
-                    await context.application.updater.stop()
+                    try:
+                        await context.application.updater.stop()
+                    except Exception:
+                        pass
                 if context.application:
-                    await context.application.stop()
+                    try:
+                        await context.application.stop()
+                    except Exception:
+                        pass
             elif (
                 isinstance(err, (TimedOut, NetworkError))
                 or "timed out" in err_str
@@ -285,7 +349,7 @@ def start_bot(
     token: Optional[str] = None,
     drop_pending_updates: bool = False,
 ) -> None:
-    """Entry point to launch the bot service with connection resilience."""
+    """Entry point to launch the bot service with continuous resilience and auto-restart."""
     import time
 
     service = BotService(token=token)
@@ -294,14 +358,15 @@ def start_bot(
         try:
             service.run_polling(drop_pending_updates=drop_pending_updates)
             if service.conflict_detected:
-                logger.error("Bot dihentikan karena konflik polling dengan instance lain.")
-                break
-            break
+                logger.warning("Bot mendeteksi konflik polling 409. Istirahat 5 detik sebelum menyambung kembali...")
+                time.sleep(5)
+                service.conflict_detected = False
+                continue
+            logger.info("Polling Telegram selesai secara normal. Menyambung kembali polling dalam 1 detik...")
+            time.sleep(1)
         except (TimedOut, NetworkError, OSError) as net_err:
-            if service.conflict_detected:
-                break
             attempt += 1
-            delay = min(2 ** attempt, 30)
+            delay = min(2 ** attempt, 15)
             logger.warning(
                 "Koneksi polling Telegram terganggu (%s). Menyambung kembali dalam %d detik (percobaan #%d)...",
                 net_err,
@@ -311,8 +376,9 @@ def start_bot(
             time.sleep(delay)
         except Exception as ex:
             if "conflict" in str(ex).lower():
-                logger.critical("Konflik 409 terdeteksi saat startup: %s", ex)
-                break
-            logger.error("Galat tak terduga pada bot service: %s", ex, exc_info=True)
-            raise
+                logger.warning("Konflik 409 terdeteksi saat startup: %s. Menunggu 5 detik sebelum re-polling...", ex)
+                time.sleep(5)
+                continue
+            logger.error("Galat tak terduga pada bot service: %s. Memulai ulang dalam 3 detik...", ex, exc_info=True)
+            time.sleep(3)
 

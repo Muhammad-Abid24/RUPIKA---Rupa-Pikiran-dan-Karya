@@ -162,3 +162,37 @@ def test_resilient_httpx_request_retries_on_stale_disconnect():
         assert b'"ok": true' in content
         assert attempts == 2  # Succeeded on retry without bubbling error
 
+
+def test_unknown_message_handler_replies_to_unrecognized_command(monkeypatch):
+    """Verify unknown commands receive helpful guidance instead of being dropped."""
+    from stockforge.bot.handlers import unknown_message_handler
+
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    update = build_mock_update(user_id=1001, chat_id=1001, chat_type=ChatType.PRIVATE)
+    update.effective_message.text = "/invalidcommand"
+    context = MagicMock()
+
+    asyncio.run(unknown_message_handler(update, context))
+
+    update.effective_message.reply_text.assert_called_once()
+    args, _ = update.effective_message.reply_text.call_args
+    assert "tidak dikenali" in args[0]
+    assert "/help" in args[0]
+
+
+def test_unknown_message_handler_replies_to_plain_text(monkeypatch):
+    """Verify normal text messages receive welcome prompt instead of being dropped."""
+    from stockforge.bot.handlers import unknown_message_handler
+
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    update = build_mock_update(user_id=1001, chat_id=1001, chat_type=ChatType.PRIVATE)
+    update.effective_message.text = "halo bot"
+    context = MagicMock()
+
+    asyncio.run(unknown_message_handler(update, context))
+
+    update.effective_message.reply_text.assert_called_once()
+    args, _ = update.effective_message.reply_text.call_args
+    assert "Halo" in args[0]
+    assert "/help" in args[0]
+
