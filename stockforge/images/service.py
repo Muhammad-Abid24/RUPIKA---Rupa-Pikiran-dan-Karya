@@ -151,8 +151,13 @@ class ImageGenerationService:
         """
         provider, model_id = await self._resolve_provider_and_model()
 
+        # 0. Disk capacity pre-flight check
+        from stockforge.ops.health import assert_disk_healthy_for_generation
+        assert_disk_healthy_for_generation(self.storage.base_data_dir)
+
         # 1. Commercial license verification
         evidence = self.verify_commercial_license(model_id)
+
 
         # 2. Determine target filename
         if not filename:

@@ -80,8 +80,9 @@ services:
       dockerfile: Dockerfile
     image: rupika:latest
     container_name: rupika_scheduler
-    command: ["research", "list"]
+    command: ["ops", "cycle"]
     restart: "no"
+
     security_opt:
       - no-new-privileges:true
     cap_drop:

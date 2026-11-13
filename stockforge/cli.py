@@ -507,9 +507,96 @@ def generate_command(
         console.print(f"[bold red]⚠ {result.failure_count} aset gagal digenerate.[/bold red]")
 
 
+# Sub-command group: Ops / Maintenance (SF-013)
+ops_app = typer.Typer(
+    name="ops",
+    help="Operasional, pemeliharaan rutin, backup, dan diagnostik kesehatan RUPIKA.",
+)
+app.add_typer(ops_app, name="ops")
+
+
+@ops_app.command(name="cycle")
+def ops_cycle(
+    trigger_backup: bool = typer.Option(True, "--backup/--no-backup", help="Sertakan backup online SQLite"),
+) -> None:
+    """Jalankan satu siklus pemeliharaan lengkap: health checks -> backup -> cleanup."""
+    from stockforge.db.session import create_session_factory
+    from stockforge.ops.scheduler import MaintenanceScheduler
+    from stockforge.storage.service import StorageService
+
+    settings = get_settings()
+    session_factory = create_session_factory(settings.database_url)
+    storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
+
+    db_path = settings.resolved_database_path
+    backup_dir = settings.resolved_data_dir() / "backups"
+
+    scheduler = MaintenanceScheduler(
+        session_factory=session_factory,
+        storage_service=storage_service,
+        db_path=db_path,
+        backup_dir=backup_dir,
+    )
+
+    console.print("[bold cyan]Menjalankan siklus pemeliharaan RUPIKA...[/bold cyan]")
+    report = scheduler.run_maintenance_cycle(trigger_backup=trigger_backup)
+
+    console.print(f"• [bold]Kapasitas Disk[/bold]: {report.disk.status.value.upper()} ({report.disk.free_percent:.1f}% free)")
+    console.print(f"• [bold]Antrean Job[/bold]: {report.queue.pending_count} pending, {report.queue.running_count} running")
+    console.print(f"• [bold]Anggaran Harian[/bold]: {report.budget.usage_percent:.1f}% terpakai")
+    console.print(f"• [bold]File Temp Dibersihkan[/bold]: {report.stale_files_cleaned} file")
+    if report.backup_file:
+        console.print(f"• [bold]File Backup[/bold]: {Path(report.backup_file).name} (Integritas: [green]OK[/green])")
+
+    console.print("[bold green]✓ Siklus pemeliharaan selesai.[/bold green]")
+
+
+@ops_app.command(name="backup")
+def ops_backup() -> None:
+    """Jalankan backup online SQLite instan dengan verifikasi checksum dan integritas."""
+    from stockforge.ops.backup import perform_sqlite_online_backup
+
+    settings = get_settings()
+    db_path = settings.resolved_database_path
+    backup_dir = settings.resolved_data_dir() / "backups"
+
+    console.print(f"[bold cyan]Membuat backup online dari database:[/bold cyan] {db_path}")
+    try:
+        backup_file = perform_sqlite_online_backup(db_path=db_path, backup_dir=backup_dir)
+        console.print(f"[bold green]✓ Backup berhasil dibuat:[/bold green] {backup_file.name}")
+    except Exception as e:
+        console.print(f"[bold red]Gagal membuat backup:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
+@ops_app.command(name="health")
+def ops_health() -> None:
+    """Tampilkan diagnostik kapasitas disk, kesehatan antrean, dan anggaran harian."""
+    from stockforge.db.session import create_session_factory
+    from stockforge.ops.health import check_budget_health, check_disk_space, check_queue_health
+    from stockforge.storage.service import StorageService
+
+    settings = get_settings()
+    session_factory = create_session_factory(settings.database_url)
+    storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
+
+    disk = check_disk_space(storage_service.base_data_dir)
+    queue = check_queue_health(session_factory)
+    budget = check_budget_health(session_factory, daily_budget_cents=int(settings.daily_budget_usd * 100))
+
+    console.print(Panel(
+        f"• [bold]Status Disk[/bold]: {disk.status.value.upper()} ({disk.free_percent:.1f}% sisa, {disk.free_bytes // (1024*1024)} MB)\n"
+        f"• [bold]Antrean Job[/bold]: {queue.pending_count} pending, {queue.running_count} running, {queue.failed_count} failed\n"
+        f"• [bold]Anggaran Harian[/bold]: ${budget.committed_cents / 100:.2f} / ${budget.daily_budget_cents / 100:.2f} ({budget.usage_percent:.1f}%)\n"
+        f"• [bold]Peringatan Anggaran[/bold]: {'[bold red]YA[/bold red]' if budget.alert_triggered else '[green]TIDAK[/green]'}",
+        title="[bold cyan]RUPIKA System Health[/bold cyan]",
+    ))
+
+
 def main() -> None:
     """CLI entry point."""
     app()
+
 
 
 if __name__ == "__main__":
