@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from stockforge.db.models import Job, JobItem, utc_now
+from stockforge.providers.resilience import AmbiguousTimeoutError
 from stockforge.queue.service import QueueService
 from stockforge.queue.tracker import ItemProgressTracker
 
@@ -98,6 +99,15 @@ class Worker:
 
                 # Persist stage update AFTER successful execution
                 tracker.update_item_stage(job_id, idx, stage="generating", status="completed")
+            except AmbiguousTimeoutError as ate:
+                logger.warning("Item %s pada job %s mengalami ambiguous timeout: %s", idx, job_id, ate)
+                tracker.update_item_stage(
+                    job_id,
+                    idx,
+                    stage="generating",
+                    status="needs_reconciliation",
+                    last_error=str(ate),
+                )
             except Exception as e:
                 logger.error("Gagal memproses item %s pada job %s: %s", idx, job_id, e)
                 tracker.update_item_stage(
@@ -107,9 +117,10 @@ class Worker:
                     status="failed",
                     last_error=str(e),
                 )
-                any_failure = True
 
         progress = tracker.get_batch_progress(job_id)
+        if progress.reconciliation_count > 0:
+            return "needs_reconciliation"
         if progress.failed_count > 0:
             return "completed_with_errors"
         return "completed"
