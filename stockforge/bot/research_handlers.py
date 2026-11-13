@@ -450,3 +450,4 @@ async def settings_command(
 
     if update.effective_message:
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+
