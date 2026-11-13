@@ -244,3 +244,4 @@ def test_secret_redaction_and_safe_telegram_formatting():
     assert "<code>openai (dall-e-3)</code>" in alert_text
     assert "<code>req_safe_001</code>" in alert_text
     assert "Routing to: <code>stability (sd3-turbo)</code>" in alert_text
+

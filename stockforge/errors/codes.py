@@ -201,3 +201,4 @@ class NormalizedProviderError:
             "model": self.model,
             "details": self.details,
         }
+

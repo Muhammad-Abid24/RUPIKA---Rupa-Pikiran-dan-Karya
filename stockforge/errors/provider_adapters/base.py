@@ -68,3 +68,4 @@ class BaseProviderErrorAdapter:
         model: Optional[str] = None,
     ) -> NormalizedProviderError:
         raise NotImplementedError
+

@@ -114,3 +114,4 @@ class AnthropicErrorAdapter(BaseProviderErrorAdapter):
             model=model,
             details={"raw_type": sanitize_sensitive_details(err_type)},
         )
+

@@ -238,3 +238,4 @@ def test_batch_completed_with_errors_when_some_items_fail(queue_env):
     assert progress.completed_count == 2
     assert progress.failed_count == 1
     assert progress.is_terminal is True
+

@@ -70,3 +70,4 @@ def format_telegram_error_alert(
         lines.append(f"• <b>Request ID:</b> <code>{html.escape(error.request_id)}</code>")
 
     return "\n".join(lines)
+

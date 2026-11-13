@@ -114,3 +114,4 @@ class StabilityErrorAdapter(BaseProviderErrorAdapter):
             model=model,
             details={"raw_name": sanitize_sensitive_details(raw_name)},
         )
+

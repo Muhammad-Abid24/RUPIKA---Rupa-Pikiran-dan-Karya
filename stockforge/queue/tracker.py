@@ -338,3 +338,4 @@ class ItemProgressTracker:
             session.commit()
             logger.info("Resumption plan untuk Job #%d: melanjutkan %d item: %s", job_id, len(to_resume), to_resume)
             return to_resume
+

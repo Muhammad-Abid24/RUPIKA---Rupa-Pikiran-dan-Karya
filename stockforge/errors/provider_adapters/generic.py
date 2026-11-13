@@ -146,3 +146,4 @@ class GenericErrorAdapter(BaseProviderErrorAdapter):
             model=model,
             details={"raw_message": sanitize_sensitive_details(msg_str)[:200]},
         )
+

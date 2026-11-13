@@ -121,3 +121,4 @@ class GeminiErrorAdapter(BaseProviderErrorAdapter):
             model=model,
             details={"raw_status": sanitize_sensitive_details(status_str)},
         )
+
