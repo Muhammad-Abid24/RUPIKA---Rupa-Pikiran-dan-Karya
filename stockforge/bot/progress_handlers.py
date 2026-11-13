@@ -251,3 +251,4 @@ async def providers_command(
     text = "\n".join(lines)
     if update.effective_message:
         await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+
