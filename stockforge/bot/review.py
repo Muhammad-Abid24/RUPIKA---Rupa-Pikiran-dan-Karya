@@ -130,8 +130,12 @@ class ReviewService:
         self,
         asset: Asset,
         token: str,
+        for_caption: bool = True,
     ) -> Tuple[str, InlineKeyboardMarkup]:
-        """Construct formatted Telegram review summary with inline action keyboard."""
+        """Construct formatted Telegram review summary with inline action keyboard.
+        
+        Guarantees caption length does not exceed Telegram 1024 character limit.
+        """
         meta = asset.metadata_entry
         qc_list = asset.qc_results or []
 
@@ -176,9 +180,16 @@ class ReviewService:
         qc_det_summary = ", ".join(det_checks) if det_checks else "Belum diperiksa"
         vision_issues_str = ", ".join(vision_issues) if vision_issues else "Tidak ada"
 
-        mp = (asset.width * asset.height) / 1_000_000.0
+        # Cap vision issues length to prevent Telegram 1024 caption limit rejection
+        max_issues = 180 if for_caption else 800
+        if len(vision_issues_str) > max_issues:
+            vision_issues_str = vision_issues_str[:max_issues - 3] + "..."
 
+        mp = (asset.width * asset.height) / 1_000_000.0
         score_display = f"{vision_score:.2f}" if vision_score is not None else "0.00"
+
+        short_disclaimer = "Automated inspection only. Human review remains mandatory prior to agency submission."
+        disclaimer_text = short_disclaimer if for_caption else VISION_QC_DISCLAIMER
 
         text = (
             f"🖼️ <b>Review Aset Stok #{asset.id}</b>\n\n"
@@ -193,9 +204,29 @@ class ReviewService:
             f"• Vision QC: {'✅ Lolos' if vision_passed else '❌ Flagged'} "
             f"(Score: {score_display})\n"
             f"• Isu Visual: {html.escape(vision_issues_str)}\n\n"
-            f"⚠️ <i>{html.escape(VISION_QC_DISCLAIMER)}</i>"
+            f"⚠️ <i>{html.escape(disclaimer_text)}</i>"
         )
 
+        # Extra safety check: if caption still exceeds 980 chars, trim further
+        if for_caption and len(text) > 980:
+            excess = len(text) - 980
+            if len(vision_issues_str) > excess + 10:
+                vision_issues_str = vision_issues_str[:-excess - 10] + "..."
+                text = (
+                    f"🖼️ <b>Review Aset Stok #{asset.id}</b>\n\n"
+                    f"• <b>File</b>: <code>{html.escape(asset.filename or '')}</code>\n"
+                    f"• <b>Dimensi</b>: {asset.width}x{asset.height} px ({mp:.1f} MP)\n"
+                    f"• <b>Status</b>: <code>{html.escape(asset.status)}</code>\n"
+                    f"• <b>Judul</b>: {html.escape(title)}\n"
+                    f"• <b>Kategori</b>: {cat_id} ({html.escape(cat_name)})\n"
+                    f"• <b>Keywords ({keywords_count})</b>: <i>{html.escape(top_keywords_str)}</i>\n\n"
+                    f"📋 <b>Hasil Quality Control (QC)</b>:\n"
+                    f"• Det. Checks: {html.escape(qc_det_summary)}\n"
+                    f"• Vision QC: {'✅ Lolos' if vision_passed else '❌ Flagged'} "
+                    f"(Score: {score_display})\n"
+                    f"• Isu Visual: {html.escape(vision_issues_str)}\n\n"
+                    f"⚠️ <i>{html.escape(disclaimer_text)}</i>"
+                )
 
         keyboard = [
             [
@@ -371,7 +402,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     token = service.generate_token(asset.id)
-    summary_text, markup = service.build_review_message_and_keyboard(asset, token)
+    summary_text, markup = service.build_review_message_and_keyboard(asset, token, for_caption=True)
 
     image_file = Path(asset.raw_path) if asset.raw_path else None
     if image_file and image_file.is_file():
@@ -385,9 +416,26 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                 )
             return
         except Exception as e:
-            logger.warning("Gagal mengirim preview foto: %s. Mengirim teks biasa.", e)
+            logger.warning("Gagal mengirim preview foto dengan caption penuh: %s. Mencoba foto dengan caption pendek...", e)
+            try:
+                short_caption = f"🖼️ <b>Review Aset Stok #{asset.id}</b> (<code>{html.escape(asset.filename or '')}</code>)"
+                with open(image_file, "rb") as f:
+                    await update.effective_message.reply_photo(
+                        photo=f,
+                        caption=short_caption,
+                        parse_mode=ParseMode.HTML,
+                    )
+                if update.effective_message:
+                    await update.effective_message.reply_text(
+                        summary_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=markup,
+                    )
+                return
+            except Exception as e2:
+                logger.error("Gagal mengirim preview foto fallback: %s. Mengirim teks biasa.", e2)
 
-    # Fallback jika file fisik tidak ada atau terjadi kendala media
+    # Fallback jika file fisik tidak ada atau terjadi kendala media total
     if update.effective_message:
         try:
             await update.effective_message.reply_text(
