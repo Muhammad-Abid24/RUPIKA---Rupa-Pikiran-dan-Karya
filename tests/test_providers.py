@@ -222,3 +222,69 @@ def test_mock_provider_protocols_execution():
     assert v_res.passed is True
     assert "clarity" in v_res.analysis
 
+
+def test_http_image_provider_with_mocked_http():
+    """Verify HttpImageProvider handles b64_json image generation cleanly."""
+    import base64
+    import io
+    from PIL import Image
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from stockforge.providers.http import HttpImageProvider
+
+    test_img = Image.new("RGB", (512, 512), color=(200, 100, 50))
+    buf = io.BytesIO()
+    test_img.save(buf, format="JPEG")
+    b64_str = base64.b64encode(buf.getvalue()).decode()
+
+    provider = HttpImageProvider(provider_name="http-img", base_url="https://api.fake.com/v1", api_key="sk-test")
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"data": [{"b64_json": b64_str}]}
+
+    with patch("httpx.AsyncClient.post", return_value=mock_resp):
+        res = asyncio.run(provider.generate_image("A vibrant sunrise", model="dall-e-3", width=512, height=512))
+
+    assert res.provider == "http-img"
+    assert res.model == "dall-e-3"
+    assert res.width == 512
+    assert res.height == 512
+    assert len(res.image_bytes) > 0
+
+
+def test_image_service_raises_when_no_active_instance_in_registry(tmp_path):
+    """Verify ImageGenerationService raises clear error if provider is not initialized, instead of dummy fallback."""
+    from stockforge.images.service import ImageGenerationService
+    from stockforge.storage.service import StorageService
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.db.models import Base
+
+    engine = create_db_engine(f"sqlite:///{tmp_path}/test.db")
+    Base.metadata.create_all(engine)
+    session_factory = create_session_factory(engine)
+    storage = StorageService(base_data_dir=tmp_path)
+
+    registry = ProviderRegistry()
+    registry.register_provider("real_image_p", ProviderKind.IMAGE, "https://api.real.com", "KEY")
+    registry.register_model(
+        "model-real-1",
+        "real_image_p",
+        ProviderKind.IMAGE,
+        {ProviderCapability.IMAGE_GENERATION, ProviderCapability.COMMERCIAL_LICENSE_VERIFIED},
+        license_evidence="stock_evidence",
+    )
+    router = ProviderRouter(registry)
+    router.set_route(RoleType.IMAGE, "model-real-1")
+
+    # ImageGenerationService without mock provider instance registered
+    service = ImageGenerationService(
+        session_factory=session_factory,
+        storage_service=storage,
+        router=router,
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        asyncio.run(service.generate_and_store_image("A futuristic city"))
+
+    assert "tidak memiliki instance aktif terdaftar" in str(exc_info.value)
+

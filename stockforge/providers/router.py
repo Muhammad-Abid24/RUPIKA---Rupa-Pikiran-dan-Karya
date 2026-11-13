@@ -138,12 +138,25 @@ class ProviderRouter:
                 base_url=base_url,
                 secret_env=secret_env,
             )
-            if base_url and api_key and kind == ProviderKind.TEXT:
-                from stockforge.providers.http import HttpTextProvider
-                self.registry.register_provider_instance(
-                    p_name,
-                    HttpTextProvider(provider_name=p_name, base_url=base_url, api_key=api_key),
-                )
+            if base_url and api_key:
+                if kind == ProviderKind.TEXT:
+                    from stockforge.providers.http import HttpTextProvider
+                    self.registry.register_provider_instance(
+                        p_name,
+                        HttpTextProvider(provider_name=p_name, base_url=base_url, api_key=api_key),
+                    )
+                elif kind == ProviderKind.IMAGE:
+                    from stockforge.providers.http import HttpImageProvider
+                    self.registry.register_provider_instance(
+                        p_name,
+                        HttpImageProvider(provider_name=p_name, base_url=base_url, api_key=api_key),
+                    )
+                elif kind == ProviderKind.VISION:
+                    from stockforge.providers.http import HttpVisionProvider
+                    self.registry.register_provider_instance(
+                        p_name,
+                        HttpVisionProvider(provider_name=p_name, base_url=base_url, api_key=api_key),
+                    )
 
         # 2. Register and configure role routes
         for role_name, r_info in roles_cfg.items():

@@ -126,11 +126,13 @@ class ImageGenerationService:
         if not model_reg:
             raise KeyError(f"Model '{model_id}' tidak ditemukan dalam registri.")
 
-        # Resolve instance from registry if available, else instantiate mock
+        # Resolve instance from registry
         provider_instance = getattr(self.router.registry, "_provider_instances", {}).get(model_reg.provider_name)
         if provider_instance is None:
-            from stockforge.providers.mock import MockImageProvider
-            provider_instance = MockImageProvider(provider_name=model_reg.provider_name)
+            raise RuntimeError(
+                f"Provider '{model_reg.provider_name}' untuk image generation tidak memiliki instance aktif terdaftar. "
+                "Harap periksa konfigurasi API key dan base URL di .env dan models.yaml."
+            )
 
         return provider_instance, model_id
 
