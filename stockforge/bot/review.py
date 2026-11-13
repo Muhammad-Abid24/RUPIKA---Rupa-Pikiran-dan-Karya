@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import html
+import io
 import json
 import logging
 import time
@@ -9,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -131,6 +132,7 @@ class ReviewService:
         asset: Asset,
         token: str,
         for_caption: bool = True,
+        has_txt_export: bool = False,
     ) -> Tuple[str, InlineKeyboardMarkup]:
         """Construct formatted Telegram review summary with inline action keyboard.
         
@@ -190,6 +192,7 @@ class ReviewService:
 
         short_disclaimer = "Automated inspection only. Human review remains mandatory prior to agency submission."
         disclaimer_text = short_disclaimer if for_caption else VISION_QC_DISCLAIMER
+        export_note = "📄 <i>Metadata lengkap & sisa keyword terlampir dalam file .txt</i>\n\n" if has_txt_export else ""
 
         text = (
             f"🖼️ <b>Review Aset Stok #{asset.id}</b>\n\n"
@@ -204,6 +207,7 @@ class ReviewService:
             f"• Vision QC: {'✅ Lolos' if vision_passed else '❌ Flagged'} "
             f"(Score: {score_display})\n"
             f"• Isu Visual: {html.escape(vision_issues_str)}\n\n"
+            f"{export_note}"
             f"⚠️ <i>{html.escape(disclaimer_text)}</i>"
         )
 
@@ -225,6 +229,7 @@ class ReviewService:
                     f"• Vision QC: {'✅ Lolos' if vision_passed else '❌ Flagged'} "
                     f"(Score: {score_display})\n"
                     f"• Isu Visual: {html.escape(vision_issues_str)}\n\n"
+                    f"{export_note}"
                     f"⚠️ <i>{html.escape(disclaimer_text)}</i>"
                 )
 
@@ -239,6 +244,109 @@ class ReviewService:
             ],
         ]
         return text, InlineKeyboardMarkup(keyboard)
+
+    def build_metadata_export_txt(self, asset: Asset) -> Tuple[str, bool]:
+        """Construct full metadata export content as formatted plain text and indicate if export is needed.
+
+        Returns:
+            Tuple[str, bool]: (txt_content, is_lengthy)
+            where is_lengthy is True if keywords count > 6 or vision issues were truncated.
+        """
+        meta = asset.metadata_entry
+        qc_list = asset.qc_results or []
+
+        title = meta.title if meta else (asset.filename or f"Asset #{asset.id}")
+        cat_id = meta.category_id if meta else None
+        cat_name = ADOBE_CATEGORIES.get(cat_id, "Belum ditentukan") if cat_id else "Belum ditentukan"
+
+        kw_list: List[str] = []
+        if meta and meta.keywords_json:
+            try:
+                kw_list = json.loads(meta.keywords_json)
+                if not isinstance(kw_list, list):
+                    kw_list = [str(kw_list)]
+            except Exception:
+                kw_list = []
+
+        # QC Findings
+        det_checks_lines: List[str] = []
+        vision_passed = True
+        vision_score: Optional[float] = None
+        vision_issues: List[str] = []
+        vision_notes = "-"
+
+        for qc in qc_list:
+            if qc.check_name == "vision_qc":
+                vision_passed = qc.passed
+                vision_score = qc.score
+                try:
+                    det = json.loads(qc.details_json) if qc.details_json else {}
+                    vision_issues = det.get("issues", [])
+                    vision_notes = det.get("notes", "-")
+                except Exception:
+                    pass
+            else:
+                passed_str = "PASS" if qc.passed else "FAIL"
+                det_checks_lines.append(f"  - {qc.check_name}: [{passed_str}] (Score: {qc.score:.2f})")
+
+        mp = (asset.width * asset.height) / 1_000_000.0 if (asset.width and asset.height) else 0.0
+
+        if kw_list:
+            keywords_block = "\n".join(f"  {idx + 1}. {k}" for idx, k in enumerate(kw_list))
+        else:
+            keywords_block = "  (Belum ada keywords yang di-generate)"
+
+        if vision_issues:
+            issues_block = "\n".join(f"  - {iss}" for iss in vision_issues)
+        else:
+            issues_block = "  - Tidak ada isu teknis/hukum yang terdeteksi."
+
+        det_block = "\n".join(det_checks_lines) if det_checks_lines else "  - Belum diperiksa"
+
+        txt_lines = [
+            "================================================================================",
+            "RUPIKA / STOCKFORGE - METADATA & QUALITY CONTROL REPORT",
+            f"Asset ID: #{asset.id}",
+            "================================================================================",
+            "",
+            "[1. INFORMASI BERKAS & RESOLUSI]",
+            f"Nama Berkas     : {asset.filename or '-'}",
+            f"Dimensi         : {asset.width} x {asset.height} px ({mp:.2f} Megapixels)",
+            f"MIME Type       : {asset.mime_type or 'image/jpeg'}",
+            f"Status Aset     : {asset.status}",
+            f"Waktu Dibuat    : {asset.created_at or '-'}",
+            f"SHA-256 Hash    : {asset.sha256 or '-'}",
+            f"Perceptual Hash : {asset.phash or '-'}",
+            "",
+            "[2. METADATA KOMERSIAL ADOBE STOCK]",
+            f"Judul Aset      : {title}",
+            f"Kategori        : {cat_id or '-'} ({cat_name})",
+            f"Tipe Konten     : {meta.content_type if meta else 'photo'}",
+            f"Total Keywords  : {len(kw_list)}",
+            "",
+            "Daftar Lengkap Keywords (Commercial Tags):",
+            keywords_block,
+            "",
+            "[3. HASIL QUALITY CONTROL (DETERMINISTIC)]",
+            det_block,
+            "",
+            "[4. HASIL QUALITY CONTROL (VISION AI)]",
+            f"Status Vision QC: {'LOLOS' if vision_passed else 'FLAGGED / GAGAL'}",
+            f"Skor Kualitas   : {vision_score:.2f}" if vision_score is not None else "Skor Kualitas   : -",
+            "Daftar Isu Visual / Legal:",
+            issues_block,
+            f"Catatan Analisis: {vision_notes}",
+            "",
+            "[5. LEGAL DISCLAIMER]",
+            VISION_QC_DISCLAIMER,
+            "================================================================================",
+        ]
+
+        txt_content = "\n".join(txt_lines)
+
+        # Flagged as lengthy if keywords count exceeds 6 or vision issues exceed 1 or full text exceeds 1200 chars
+        is_lengthy = len(kw_list) > 6 or len(vision_issues) > 1 or len(txt_content) > 1200
+        return txt_content, is_lengthy
 
     def process_review_action(
         self,
@@ -372,83 +480,125 @@ def get_review_service(session_factory: Optional[Callable[[], Session]] = None) 
 @require_admin
 async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /review command providing interactive visual review wizard."""
-    service = get_review_service()
-
-    target_id: Optional[int] = None
-    if context.args and len(context.args) > 0 and context.args[0].isdigit():
-        target_id = int(context.args[0])
-
-    asset = service.get_pending_asset(asset_id=target_id)
-    if not asset and target_id is not None:
-        asset = service.get_pending_asset(job_id=target_id)
-
-    if not asset:
-        active_job = service.get_active_generation_job(job_id=target_id if target_id else None)
-        if not active_job and target_id is not None:
-            active_job = service.get_active_generation_job()
-
-        if active_job:
-            msg = (
-                f"⏳ <b>Proses generate gambar belum selesai</b> (Batch #{active_job.id}).\n\n"
-                f"Silakan periksa kemajuan dengan perintah <code>/status {active_job.id}</code>."
-            )
-        elif target_id:
-            msg = f"Tidak ada aset #{target_id} yang dapat direview."
-        else:
-            msg = "Tidak ada aset yang menunggu review saat ini."
-
-        if update.effective_message:
-            await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
-        return
-
-    token = service.generate_token(asset.id)
-    summary_text, markup = service.build_review_message_and_keyboard(asset, token, for_caption=True)
-
-    image_file = Path(asset.raw_path) if asset.raw_path else None
-    if image_file and image_file.is_file():
+    # 1. Tampilkan typing indicator ke user
+    if update.effective_chat and context.bot:
         try:
-            with open(image_file, "rb") as f:
-                await update.effective_message.reply_photo(
-                    photo=f,
-                    caption=summary_text,
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=markup,
+            await context.bot.send_chat_action(
+                chat_id=update.effective_chat.id,
+                action=ChatAction.TYPING,
+            )
+        except Exception as act_err:
+            logger.debug("Gagal mengirim typing chat action: %s", act_err)
+
+    try:
+        service = get_review_service()
+
+        target_id: Optional[int] = None
+        if context.args and len(context.args) > 0 and context.args[0].isdigit():
+            target_id = int(context.args[0])
+
+        asset = service.get_pending_asset(asset_id=target_id)
+        if not asset and target_id is not None:
+            asset = service.get_pending_asset(job_id=target_id)
+
+        if not asset:
+            active_job = service.get_active_generation_job(job_id=target_id if target_id else None)
+            if not active_job and target_id is not None:
+                active_job = service.get_active_generation_job()
+
+            if active_job:
+                msg = (
+                    f"⏳ <b>Proses generate gambar belum selesai</b> (Batch #{active_job.id}).\n\n"
+                    f"Silakan periksa kemajuan dengan perintah <code>/status {active_job.id}</code>."
                 )
+            elif target_id:
+                msg = f"Tidak ada aset #{target_id} yang dapat direview."
+            else:
+                msg = "Tidak ada aset yang menunggu review saat ini."
+
+            if update.effective_message:
+                await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
             return
-        except Exception as e:
-            logger.warning("Gagal mengirim preview foto dengan caption penuh: %s. Mencoba foto dengan caption pendek...", e)
+
+        token = service.generate_token(asset.id)
+        txt_content, is_lengthy = service.build_metadata_export_txt(asset)
+        summary_text, markup = service.build_review_message_and_keyboard(
+            asset, token, for_caption=True, has_txt_export=is_lengthy
+        )
+
+        photo_sent = False
+        image_file = Path(asset.raw_path) if asset.raw_path else None
+        if image_file and image_file.is_file():
             try:
-                short_caption = f"🖼️ <b>Review Aset Stok #{asset.id}</b> (<code>{html.escape(asset.filename or '')}</code>)"
                 with open(image_file, "rb") as f:
                     await update.effective_message.reply_photo(
                         photo=f,
-                        caption=short_caption,
-                        parse_mode=ParseMode.HTML,
-                    )
-                if update.effective_message:
-                    await update.effective_message.reply_text(
-                        summary_text,
+                        caption=summary_text,
                         parse_mode=ParseMode.HTML,
                         reply_markup=markup,
                     )
-                return
-            except Exception as e2:
-                logger.error("Gagal mengirim preview foto fallback: %s. Mengirim teks biasa.", e2)
+                photo_sent = True
+            except Exception as e:
+                logger.warning("Gagal mengirim preview foto dengan caption penuh: %s. Mencoba foto dengan caption pendek...", e)
+                try:
+                    short_caption = f"🖼️ <b>Review Aset Stok #{asset.id}</b> (<code>{html.escape(asset.filename or '')}</code>)"
+                    with open(image_file, "rb") as f:
+                        await update.effective_message.reply_photo(
+                            photo=f,
+                            caption=short_caption,
+                            parse_mode=ParseMode.HTML,
+                        )
+                    if update.effective_message:
+                        await update.effective_message.reply_text(
+                            summary_text,
+                            parse_mode=ParseMode.HTML,
+                            reply_markup=markup,
+                        )
+                    photo_sent = True
+                except Exception as e2:
+                    logger.error("Gagal mengirim preview foto fallback: %s. Mengirim teks biasa.", e2)
 
-    # Fallback jika file fisik tidak ada atau terjadi kendala media total
-    if update.effective_message:
-        try:
-            await update.effective_message.reply_text(
-                summary_text,
-                parse_mode=ParseMode.HTML,
-                reply_markup=markup,
-            )
-        except Exception as e:
-            logger.error("Gagal mengirim pesan review dengan HTML: %s. Mengirim teks polos.", e)
-            await update.effective_message.reply_text(
-                summary_text,
-                reply_markup=markup,
-            )
+        # Fallback jika file fisik tidak ada atau terjadi kendala media total
+        if not photo_sent and update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    summary_text,
+                    parse_mode=ParseMode.HTML,
+                    reply_markup=markup,
+                )
+            except Exception as e:
+                logger.error("Gagal mengirim pesan review dengan HTML: %s. Mengirim teks polos.", e)
+                await update.effective_message.reply_text(
+                    summary_text,
+                    reply_markup=markup,
+                )
+
+        # Jika metadata terlalu panjang, ekspor sisanya / lengkap dalam bentuk file .txt
+        if is_lengthy and update.effective_message:
+            try:
+                bio = io.BytesIO(txt_content.encode("utf-8"))
+                bio.name = f"metadata_asset_{asset.id}.txt"
+                caption_doc = f"📄 Metadata lengkap & sisa keywords untuk Aset #{asset.id} (.txt)"
+                await update.effective_message.reply_document(
+                    document=bio,
+                    filename=f"metadata_asset_{asset.id}.txt",
+                    caption=caption_doc,
+                )
+            except Exception as doc_err:
+                logger.error("Gagal mengirim lampiran dokumen metadata .txt: %s", doc_err)
+
+    except Exception as err:
+        logger.error("Terjadi galat saat memproses review aset: %s", err, exc_info=True)
+        err_msg = (
+            f"❌ <b>Terjadi galat saat memproses review aset</b>\n\n"
+            f"• <b>Penyebab</b>: <code>{html.escape(str(err))}</code>\n\n"
+            f"Silakan periksa log sistem atau coba kembali beberapa saat lagi."
+        )
+        if update.effective_message:
+            try:
+                await update.effective_message.reply_text(err_msg, parse_mode=ParseMode.HTML)
+            except Exception:
+                await update.effective_message.reply_text(f"❌ Terjadi kesalahan pada /review: {err}")
 
 
 @require_admin

@@ -118,6 +118,7 @@ def build_mock_command_update(
     message = MagicMock(spec=Message)
     message.reply_text = AsyncMock()
     message.reply_photo = AsyncMock()
+    message.reply_document = AsyncMock()
 
     update.effective_user = user
     update.effective_chat = chat
@@ -125,6 +126,7 @@ def build_mock_command_update(
     update.callback_query = None
 
     context = MagicMock()
+    context.bot.send_chat_action = AsyncMock()
     context.args = args or []
     return update, context
 
@@ -518,4 +520,75 @@ def test_review_by_job_id(review_env, monkeypatch):
     assert update.effective_message.reply_photo.called
     caption = update.effective_message.reply_photo.call_args[1].get("caption", "")
     assert "Review Aset Stok #99" in caption
+
+
+def test_review_sends_typing_action(review_env, monkeypatch):
+    """Verify that /review triggers Telegram typing chat action immediately."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    update, context = build_mock_command_update(user_id=1001, chat_id=1001)
+    asyncio.run(review_command_handler(update, context))
+
+    from telegram.constants import ChatAction
+    context.bot.send_chat_action.assert_called_once_with(
+        chat_id=1001,
+        action=ChatAction.TYPING,
+    )
+
+
+def test_review_displays_error_to_user_on_failure(review_env, monkeypatch):
+    """Verify that when an error occurs during review, the error cause is displayed to user."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+
+    # Mock service that raises an exception
+    faulty_service = MagicMock()
+    faulty_service.get_pending_asset.side_effect = RuntimeError("Database disk I/O failure")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: faulty_service)
+
+    update, context = build_mock_command_update(user_id=1001, chat_id=1001)
+    asyncio.run(review_command_handler(update, context))
+
+    # Error must be sent to user so they are aware
+    assert update.effective_message.reply_text.called
+    error_sent = update.effective_message.reply_text.call_args[0][0]
+    assert "Terjadi galat saat memproses review aset" in error_sent
+    assert "Database disk I/O failure" in error_sent
+
+
+def test_review_exports_txt_for_lengthy_metadata(review_env, monkeypatch):
+    """Verify that lengthy metadata (>6 keywords) exports remainder as .txt attachment."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    # Asset with 20 keywords
+    asset = _create_test_asset_with_qc(session_factory, raw_dir, asset_id=77)
+    many_keywords = [f"keyword_{i}" for i in range(1, 21)]
+    with session_factory() as s:
+        meta = s.query(AssetMetadata).filter_by(asset_id=77).first()
+        meta.keywords_json = json.dumps(many_keywords)
+        s.commit()
+
+    update, context = build_mock_command_update(user_id=1001, chat_id=1001, args=["77"])
+    asyncio.run(review_command_handler(update, context))
+
+    # 1. Preview photo is sent
+    assert update.effective_message.reply_photo.called
+    caption = update.effective_message.reply_photo.call_args[1].get("caption", "")
+    assert "Review Aset Stok #77" in caption
+    assert ".txt" in caption  # Mention of .txt attachment in caption
+
+    # 2. Document is attached with full .txt report
+    assert update.effective_message.reply_document.called
+    doc_kwargs = update.effective_message.reply_document.call_args[1]
+    assert doc_kwargs["filename"] == "metadata_asset_77.txt"
+    doc_io = doc_kwargs["document"]
+    txt_content = doc_io.getvalue().decode("utf-8")
+    assert "RUPIKA / STOCKFORGE - METADATA & QUALITY CONTROL REPORT" in txt_content
+    assert "Total Keywords  : 20" in txt_content
+    assert "keyword_20" in txt_content  # Complete list included
+
 
