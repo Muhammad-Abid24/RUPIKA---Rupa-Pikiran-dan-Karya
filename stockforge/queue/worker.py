@@ -102,6 +102,33 @@ class Worker:
             err_msg = batch_res.failed_items[0].get("error", "Generasi gambar gagal")
             raise RuntimeError(err_msg)
 
+        if batch_res.successful_assets:
+            created_asset = batch_res.successful_assets[0]
+            # Run deterministic QC automatically
+            try:
+                from stockforge.qc.deterministic import DeterministicQcService
+                qc_svc = DeterministicQcService(session_factory=lambda: Session(self.queue_service.engine))
+                qc_svc.inspect_asset(created_asset.id)
+            except Exception as qc_ex:
+                logger.warning("Deterministic QC gagal untuk asset #%s: %s", created_asset.id, qc_ex)
+
+            # Attempt vision inspection and metadata generation if router is configured
+            if router:
+                try:
+                    from stockforge.qc.vision import VisionQcService
+                    vision_svc = VisionQcService(
+                        session_factory=lambda: Session(self.queue_service.engine),
+                        storage_service=storage,
+                        router_or_provider=router,
+                    )
+                    asyncio.run(vision_svc.inspect_image_vision(created_asset.id))
+                    asyncio.run(vision_svc.generate_metadata(created_asset.id))
+                except Exception as vis_ex:
+                    logger.warning("Vision QC / Metadata gagal untuk asset #%s: %s", created_asset.id, vis_ex)
+
+            return created_asset.id
+        return None
+
     def _send_telegram_failure_alert(
         self,
         job_id: int,
@@ -193,13 +220,14 @@ class Worker:
 
             try:
                 # Network / processing happens outside database transaction!
+                asset_id = None
                 if item_processor:
-                    item_processor(job_id, idx)
+                    asset_id = item_processor(job_id, idx)
                 else:
-                    self._default_pipeline_item_processor(job_id, idx)
+                    asset_id = self._default_pipeline_item_processor(job_id, idx)
 
                 # Persist stage update AFTER successful execution
-                tracker.update_item_stage(job_id, idx, stage="generating", status="completed")
+                tracker.update_item_stage(job_id, idx, stage="generating", status="completed", asset_id=asset_id)
             except AmbiguousTimeoutError as ate:
                 logger.warning("Item %s pada job %s mengalami ambiguous timeout: %s", idx, job_id, ate)
                 tracker.update_item_stage(

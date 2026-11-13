@@ -49,7 +49,7 @@ class ReviewService:
                 stmt = (
                     select(Asset)
                     .where(Asset.status.in_(["qc_passed", "review_pending", "generated"]))
-                    .order_by(Asset.id.asc())
+                    .order_by(Asset.id.desc())
                     .limit(1)
                 )
             asset = session.scalars(stmt).first()

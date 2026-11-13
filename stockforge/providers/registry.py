@@ -61,6 +61,13 @@ class ProviderRegistry:
         """Retrieve initialized client instance for a provider."""
         return self._provider_instances.get(name)
 
+    def get_provider_for_model(self, model_id: str) -> Optional[Any]:
+        """Retrieve initialized provider instance corresponding to a model ID."""
+        model = self.get_model(model_id)
+        if not model:
+            return None
+        return self.get_provider_instance(model.provider_name)
+
     def register_provider(
         self,
         name: str,
