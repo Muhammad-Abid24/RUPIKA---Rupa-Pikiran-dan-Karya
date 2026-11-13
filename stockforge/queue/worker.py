@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from stockforge.db.models import Job, JobItem, utc_now
 from stockforge.queue.service import QueueService
+from stockforge.queue.tracker import ItemProgressTracker
 
 logger = logging.getLogger("stockforge.queue.worker")
 
@@ -50,31 +51,42 @@ class Worker:
         job_id: int,
         item_processor: Optional[Callable[[int, int], None]] = None,
     ) -> str:
-        """Process items belonging to a claimed job.
+        """Process items belonging to a claimed job with durable stage tracking.
         
-        item_processor: optional callback (job_id, item_index) for pluggable stage execution.
-        Returns final status: 'completed', 'completed_with_errors', or 'cancelled'.
+        Guarantees:
+        - Accurately tracks per-item stages before and after external calls.
+        - Preserves progress across crashes; never reruns completed images.
+        - Returns final status: 'completed', 'completed_with_errors', or 'cancelled'.
         """
-        # Load items
+        tracker = ItemProgressTracker(lambda: Session(self.queue_service.engine))
+
+        # Check existing items or prepare resumption plan
         with Session(self.queue_service.engine) as session:
             job = session.get(Job, job_id)
             if not job:
                 return "failed"
-            item_indices = [item.item_index for item in job.items]
+            has_items = len(job.items) > 0
 
-        # If no items explicitly created, fallback to item 1
-        if not item_indices:
-            item_indices = [1]
+        # If job had no items created yet, initialize item 1
+        if not has_items:
+            tracker.initialize_job_items(job_id, total_items=1, initial_stage="generating")
+
+        # Plan which items need execution (excluding completed ones!)
+        indices_to_run = tracker.prepare_resumption_plan(job_id)
 
         any_failure = False
-        for idx in item_indices:
+        for idx in indices_to_run:
             # Check cancellation before starting next item
             if self.check_is_cancelled(job_id):
                 logger.info("Pekerjaan %s dibatalkan secara kooperatif oleh operator", job_id)
+                tracker.update_item_stage(job_id, idx, stage="generating", status="cancelled")
                 return "cancelled"
 
             # Heartbeat to extend lease
             self.queue_service.heartbeat(job_id, self.worker_id, extend_seconds=self.lease_seconds)
+
+            # Persist stage update BEFORE external execution
+            tracker.update_item_stage(job_id, idx, stage="generating", status="processing")
 
             try:
                 # Network / processing happens outside database transaction!
@@ -83,11 +95,25 @@ class Worker:
                 else:
                     # Default simulation: lightweight placeholder processing
                     time.sleep(0.01)
+
+                # Persist stage update AFTER successful execution
+                tracker.update_item_stage(job_id, idx, stage="generating", status="completed")
             except Exception as e:
                 logger.error("Gagal memproses item %s pada job %s: %s", idx, job_id, e)
+                tracker.update_item_stage(
+                    job_id,
+                    idx,
+                    stage="generating",
+                    status="failed",
+                    last_error=str(e),
+                )
                 any_failure = True
 
-        return "completed_with_errors" if any_failure else "completed"
+        progress = tracker.get_batch_progress(job_id)
+        if progress.failed_count > 0:
+            return "completed_with_errors"
+        return "completed"
+
 
     def run_once(
         self,
