@@ -32,7 +32,10 @@ def format_progress_message(
     status_icon = "⏳"
     status_label = "Memproses"
     if summary.is_terminal:
-        if summary.failed_count > 0:
+        if summary.completed_count == 0 and summary.failed_count > 0:
+            status_icon = "❌"
+            status_label = "Gagal"
+        elif summary.failed_count > 0:
             status_icon = "⚠️"
             status_label = "Selesai Sebagian (Ada Kegagalan)"
         elif summary.cancelled_count > 0:

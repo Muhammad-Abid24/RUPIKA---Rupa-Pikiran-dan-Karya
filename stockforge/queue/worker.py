@@ -97,7 +97,57 @@ class Worker:
         )
 
         # Generate single image
-        asyncio.run(image_service.generate_batch(prompts=[prompt], max_batch_size=1, job_id=job_id))
+        batch_res = asyncio.run(image_service.generate_batch(prompts=[prompt], max_batch_size=1, job_id=job_id))
+        if batch_res.failure_count > 0:
+            err_msg = batch_res.failed_items[0].get("error", "Generasi gambar gagal")
+            raise RuntimeError(err_msg)
+
+    def _send_telegram_failure_alert(
+        self,
+        job_id: int,
+        item_index: int,
+        stage: str,
+        error_msg: str,
+    ) -> None:
+        """Send immediate failure alert to Telegram admin(s)."""
+        import html
+        import httpx
+        from stockforge.config import get_settings
+
+        try:
+            settings = get_settings()
+            token = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
+            admin_ids = settings.admin_ids
+            if not token or not admin_ids:
+                return
+
+            alert_text = (
+                f"❌ <b>Kegagalan Produksi Gambar (Job #{job_id})</b>\n\n"
+                f"• <b>Item:</b> Gambar #{item_index}\n"
+                f"• <b>Tahap:</b> <code>{html.escape(stage.upper())}</code>\n"
+                f"• <b>Penyebab Error:</b>\n<code>{html.escape(error_msg[:500])}</code>\n\n"
+                f"💡 <i>Gunakan perintah <code>/status {job_id}</code> untuk status batch atau <code>/failed {job_id}</code> untuk laporan lengkap.</i>"
+            )
+
+            for admin_id in admin_ids:
+                try:
+                    resp = httpx.post(
+                        f"https://api.telegram.org/bot{token}/sendMessage",
+                        json={
+                            "chat_id": admin_id,
+                            "text": alert_text,
+                            "parse_mode": "HTML",
+                        },
+                        timeout=10.0,
+                    )
+                    if resp.status_code == 200:
+                        logger.info("Notifikasi error Telegram berhasil dikirim ke admin #%s untuk job #%s", admin_id, job_id)
+                    else:
+                        logger.warning("Telegram API mengembalikan status %s saat kirim alert: %s", resp.status_code, resp.text)
+                except Exception as ex:
+                    logger.warning("Gagal mengirim notifikasi error ke Telegram admin #%s: %s", admin_id, ex)
+        except Exception as top_ex:
+            logger.warning("Ekspepsi saat menyiapkan alert Telegram: %s", top_ex)
 
     def execute_job_items(
         self,
@@ -159,6 +209,7 @@ class Worker:
                     status="needs_reconciliation",
                     last_error=str(ate),
                 )
+                self._send_telegram_failure_alert(job_id, idx, "generating", str(ate))
             except Exception as e:
                 logger.error("Gagal memproses item %s pada job %s: %s", idx, job_id, e)
                 tracker.update_item_stage(
@@ -168,10 +219,13 @@ class Worker:
                     status="failed",
                     last_error=str(e),
                 )
+                self._send_telegram_failure_alert(job_id, idx, "generating", str(e))
 
         progress = tracker.get_batch_progress(job_id)
         if progress.reconciliation_count > 0:
             return "needs_reconciliation"
+        if progress.completed_count == 0 and progress.failed_count > 0:
+            return "failed"
         if progress.failed_count > 0:
             return "completed_with_errors"
         return "completed"
