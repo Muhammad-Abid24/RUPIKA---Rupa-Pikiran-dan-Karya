@@ -42,12 +42,12 @@ def is_private_chat(chat: Optional[Chat]) -> bool:
 
 
 def require_admin(
-    handler_fn: Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]
-) -> Callable[[Update, ContextTypes.DEFAULT_TYPE], Coroutine[Any, Any, None]]:
+    handler_fn: Callable[..., Coroutine[Any, Any, Any]]
+) -> Callable[..., Coroutine[Any, Any, Any]]:
     """Decorator enforcing private-chat-only and allowlisted numeric admin ID checks."""
 
     @functools.wraps(handler_fn)
-    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args: Any, **kwargs: Any) -> Any:
         if not update:
             return
 
@@ -93,10 +93,8 @@ def require_admin(
                 await update.effective_message.reply_text(DENIED_GENERIC_MESSAGE)
             return
 
-
-
         # Authorized admin in private chat
-        return await handler_fn(update, context)
+        return await handler_fn(update, context, *args, **kwargs)
 
     return wrapper
 

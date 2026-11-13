@@ -42,8 +42,41 @@ class BotService:
         app.add_handler(CommandHandler("health", health_handler))
         app.add_handler(CommandHandler("review", review_command_handler))
 
+        from stockforge.bot.progress_handlers import (
+            failed_command,
+            providers_command,
+            retry_callback_handler,
+            retry_command,
+            status_command,
+        )
+
+        def get_sf():
+            from stockforge.db.session import create_session_factory
+            return create_session_factory()
+
+        async def _status_handler(u, c):
+            await status_command(u, c, session_factory=get_sf())
+
+        async def _failed_handler(u, c):
+            await failed_command(u, c, session_factory=get_sf())
+
+        async def _retry_handler(u, c):
+            await retry_command(u, c, session_factory=get_sf())
+
+        async def _retry_cb(u, c):
+            await retry_callback_handler(u, c, session_factory=get_sf())
+
+        async def _providers_handler(u, c):
+            await providers_command(u, c)
+
+        app.add_handler(CommandHandler("status", _status_handler))
+        app.add_handler(CommandHandler("failed", _failed_handler))
+        app.add_handler(CommandHandler("retry", _retry_handler))
+        app.add_handler(CommandHandler("providers", _providers_handler))
+
         # Register callback query handlers
         app.add_handler(CallbackQueryHandler(review_callback_handler, pattern=r"^rev:"))
+        app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_"))
 
 
         # Register global error handler with 409 Conflict detection
