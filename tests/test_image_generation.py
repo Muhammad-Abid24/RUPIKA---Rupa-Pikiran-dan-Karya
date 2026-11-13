@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import io
 from pathlib import Path
 import pytest
@@ -32,7 +33,14 @@ from stockforge.storage.service import (
 
 
 @pytest.fixture
-def test_env(tmp_path: Path):
+def test_env(tmp_path: Path, monkeypatch):
+    """Setup isolated database and storage directory with healthy disk space."""
+    monkeypatch.setattr(
+        "shutil.disk_usage",
+        lambda p: collections.namedtuple("usage", ["total", "used", "free"])(
+            100 * 1024 * 1024 * 1024, 20 * 1024 * 1024 * 1024, 80 * 1024 * 1024 * 1024
+        ),
+    )
     """Setup isolated database and storage directory."""
     db_path = tmp_path / "test_images.db"
     engine = create_engine(f"sqlite:///{db_path}")

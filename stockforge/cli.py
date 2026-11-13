@@ -211,12 +211,17 @@ def bot_command(
         "-t",
         help="Telegram bot token. Defaults to TELEGRAM_BOT_TOKEN from environment.",
     ),
+    drop_pending_updates: bool = typer.Option(
+        True,
+        "--drop-pending-updates/--no-drop-pending-updates",
+        help="Drop stale pending updates accumulated while offline.",
+    ),
 ) -> None:
     """Start Telegram bot long polling service."""
     from stockforge.bot.service import start_bot
     console.print("[bold cyan]Menjalankan RUPIKA Telegram Bot service...[/bold cyan]")
     try:
-        start_bot(token=token)
+        start_bot(token=token, drop_pending_updates=drop_pending_updates)
     except Exception as e:
         console.print(f"[bold red]Gagal menjalankan bot:[/bold red] {e}")
         raise typer.Exit(code=1)

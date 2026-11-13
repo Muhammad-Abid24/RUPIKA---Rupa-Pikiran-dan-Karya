@@ -139,15 +139,15 @@ class BotService:
         app.add_error_handler(error_handler)
         return app
 
-    def run_polling(self) -> None:
+    def run_polling(self, drop_pending_updates: bool = True) -> None:
         """Start long polling with graceful shutdown on conflict."""
         app = self.build_application()
-        logger.info("Memulai Telegram bot polling...")
-        app.run_polling(drop_pending_updates=False)
+        logger.info("Memulai Telegram bot polling (drop_pending_updates=%s)...", drop_pending_updates)
+        app.run_polling(drop_pending_updates=drop_pending_updates)
 
 
-def start_bot(token: Optional[str] = None) -> None:
+def start_bot(token: Optional[str] = None, drop_pending_updates: bool = True) -> None:
     """Entry point to launch the bot service."""
     service = BotService(token=token)
-    service.run_polling()
+    service.run_polling(drop_pending_updates=drop_pending_updates)
 

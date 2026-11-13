@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import io
 import json
 import os
@@ -41,8 +42,14 @@ from stockforge.storage.service import StorageService
 
 
 @pytest.fixture
-def ops_env(tmp_path: Path):
-    """Setup isolated SQLite DB, storage, and backup directory."""
+def ops_env(tmp_path: Path, monkeypatch):
+    """Setup isolated SQLite DB, storage, and backup directory with healthy disk space."""
+    monkeypatch.setattr(
+        "shutil.disk_usage",
+        lambda p: collections.namedtuple("usage", ["total", "used", "free"])(
+            100 * 1024 * 1024 * 1024, 20 * 1024 * 1024 * 1024, 80 * 1024 * 1024 * 1024
+        ),
+    )
     db_path = tmp_path / "test_ops.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
