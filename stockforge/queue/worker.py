@@ -76,18 +76,46 @@ class Worker:
                 except Exception:
                     pass
 
-        # Resolve prompt from ProductionPlan
+        # Resolve prompt from JobEvent (e.g. regeneration_request), Concept, or ProductionPlan
         prompt = f"Commercial stock photo concept #{item_index}"
         with Session(self.queue_service.engine) as session:
-            plan = session.scalar(select(ProductionPlan).where(ProductionPlan.consumed_job_id == job_id))
-            if plan and plan.concepts_json:
+            # 1. Check JobEvent for explicit prompt (e.g. regeneration request)
+            from stockforge.db.models import JobEvent, Concept
+            regen_event = session.scalar(
+                select(JobEvent)
+                .where(
+                    JobEvent.job_id == job_id,
+                    JobEvent.event_type.in_(["regeneration_request", "prompt_override"]),
+                )
+                .order_by(JobEvent.id.desc())
+            )
+            if regen_event and regen_event.payload_json:
                 try:
-                    concepts = json.loads(plan.concepts_json)
-                    idx = item_index - 1
-                    if 0 <= idx < len(concepts):
-                        prompt = concepts[idx].get("prompt") or concepts[idx].get("title") or prompt
+                    pdata = json.loads(regen_event.payload_json)
+                    if pdata.get("prompt"):
+                        prompt = pdata["prompt"]
                 except Exception as ex:
-                    logger.warning("Gagal mem-parse concepts_json dari plan #%s: %s", plan.id, ex)
+                    logger.warning("Gagal mem-parse prompt dari JobEvent: %s", ex)
+
+            # 2. Check Concept linked to Job
+            if prompt.startswith("Commercial stock photo concept #"):
+                job_rec = session.get(Job, job_id)
+                if job_rec and job_rec.concept_id:
+                    concept = session.get(Concept, job_rec.concept_id)
+                    if concept and concept.prompt:
+                        prompt = concept.prompt
+
+            # 3. Check ProductionPlan
+            if prompt.startswith("Commercial stock photo concept #"):
+                plan = session.scalar(select(ProductionPlan).where(ProductionPlan.consumed_job_id == job_id))
+                if plan and plan.concepts_json:
+                    try:
+                        concepts = json.loads(plan.concepts_json)
+                        idx = item_index - 1
+                        if 0 <= idx < len(concepts):
+                            prompt = concepts[idx].get("prompt") or concepts[idx].get("title") or prompt
+                    except Exception as ex:
+                        logger.warning("Gagal mem-parse concepts_json dari plan #%s: %s", plan.id, ex)
 
         image_service = ImageGenerationService(
             session_factory=lambda: Session(self.queue_service.engine),

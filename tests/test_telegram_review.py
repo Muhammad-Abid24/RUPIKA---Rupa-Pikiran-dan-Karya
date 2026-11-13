@@ -374,6 +374,24 @@ def test_reject_and_regenerate_actions(review_env, monkeypatch):
         rev_31 = session.query(Review).filter_by(asset_id=31).first()
         assert rev_31.decision == "regenerate"
 
+        # Verify new regeneration Job, JobEvent, and JobItem were properly enqueued
+        from stockforge.db.models import Job, JobEvent, JobItem
+        regen_job = session.query(Job).filter(Job.type == "image_batch").order_by(Job.id.desc()).first()
+        assert regen_job is not None
+        assert regen_job.status == "pending"
+        assert "regen_31_" in regen_job.operation_id
+
+        regen_ev = session.query(JobEvent).filter(JobEvent.job_id == regen_job.id).first()
+        assert regen_ev is not None
+        assert regen_ev.event_type == "regeneration_request"
+        pdata = json.loads(regen_ev.payload_json)
+        assert pdata["original_asset_id"] == 31
+        assert "prompt" in pdata
+
+        items = session.query(JobItem).filter(JobItem.job_id == regen_job.id).all()
+        assert len(items) == 1
+        assert items[0].stage == "generating"
+
 
 # ---------------------------------------------------------------------------
 # Test 7: Callback TTL Expiration
@@ -590,5 +608,56 @@ def test_review_exports_txt_for_lengthy_metadata(review_env, monkeypatch):
     assert "RUPIKA / STOCKFORGE - METADATA & QUALITY CONTROL REPORT" in txt_content
     assert "Total Keywords  : 20" in txt_content
     assert "keyword_20" in txt_content  # Complete list included
+
+
+def test_regeneration_flow_executes_worker_and_produces_new_asset(review_env, monkeypatch):
+    """Verify full end-to-end flow: user selects regenerate, job enqueued, worker processes it."""
+    session_factory, service, raw_dir = review_env
+    monkeypatch.setenv("TELEGRAM_ADMIN_IDS", "1001")
+    monkeypatch.setattr("stockforge.bot.review.get_review_service", lambda: service)
+
+    # 1. Create asset #88
+    _create_test_asset_with_qc(session_factory, raw_dir, asset_id=88)
+    token = service.generate_token(88)
+
+    cb_reg, cb_ctx_reg = build_mock_callback_update(
+        user_id=1001, chat_id=1001, callback_data=f"rev:reg:88:{token}"
+    )
+    asyncio.run(review_callback_handler(cb_reg, cb_ctx_reg))
+
+    with session_factory() as s:
+        asset_88 = s.get(Asset, 88)
+        assert asset_88.status == "regenerating"
+
+        from stockforge.db.models import Job, JobEvent
+        new_job = s.query(Job).filter(Job.type == "image_batch").order_by(Job.id.desc()).first()
+        assert new_job is not None
+        assert new_job.status == "pending"
+
+        ev = s.query(JobEvent).filter(JobEvent.job_id == new_job.id).first()
+        assert ev.event_type == "regeneration_request"
+
+    # 2. Worker executes new job
+    from stockforge.queue.service import QueueService
+    from stockforge.queue.worker import Worker
+
+    engine = session_factory().get_bind()
+    qs = QueueService(engine)
+    worker = Worker(queue_service=qs, worker_id="test-worker")
+    monkeypatch.setattr(worker, "_post_telegram", lambda *args, **kwargs: None)
+
+    def mock_processor(job_id: int, item_index: int) -> int:
+        new_asset = _create_test_asset_with_qc(session_factory, raw_dir, asset_id=89, status="qc_passed")
+        return new_asset.id
+
+    processed_job_id = worker.run_once(item_processor=mock_processor)
+    assert processed_job_id == new_job.id
+
+    with session_factory() as s:
+        finished_job = s.get(Job, new_job.id)
+        assert finished_job.status == "completed"
+        new_asset = s.get(Asset, 89)
+        assert new_asset.status == "qc_passed"
+
 
 

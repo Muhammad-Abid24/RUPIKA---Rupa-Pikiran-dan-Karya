@@ -8,7 +8,7 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple
 from PIL import Image
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatAction, ParseMode
@@ -34,13 +34,90 @@ class ReviewResult:
     new_status: Optional[str] = None
     already_completed: bool = False
     message: str = ""
+    new_job_id: Optional[int] = None
 
 
 class ReviewService:
     """Coordinates asset retrieval, review presentation, and idempotent state transitions."""
 
-    def __init__(self, session_factory: Callable[[], Session]) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], Session],
+        queue_service: Optional[Any] = None,
+    ) -> None:
         self.session_factory = session_factory
+        self.queue_service = queue_service
+
+    def _get_queue_service(self, session: Session) -> Optional[Any]:
+        """Get or lazily create QueueService from database session bind."""
+        if self.queue_service is not None:
+            return self.queue_service
+        try:
+            bind = session.get_bind()
+            if bind:
+                from stockforge.queue.service import QueueService
+                self.queue_service = QueueService(engine=bind)
+                return self.queue_service
+        except Exception as ex:
+            logger.warning("Tidak dapat menginisialisasi QueueService otomatis: %s", ex)
+        return None
+
+    def _resolve_prompt_for_asset(self, session: Session, asset: Asset) -> str:
+        """Resolve concept prompt from previous JobEvent, ProductionPlan, Concept, or metadata."""
+        from stockforge.db.models import Job, JobItem, JobEvent, Concept, ProductionPlan
+        prompt: Optional[str] = None
+
+        # 1. Check previous JobEvent (if this asset was already generated from a prompt override or regen)
+        if asset.job_id:
+            regen_ev = session.scalar(
+                select(JobEvent)
+                .where(
+                    JobEvent.job_id == asset.job_id,
+                    JobEvent.event_type.in_(["regeneration_request", "prompt_override"]),
+                )
+                .order_by(JobEvent.id.desc())
+            )
+            if regen_ev and regen_ev.payload_json:
+                try:
+                    pdata = json.loads(regen_ev.payload_json)
+                    if pdata.get("prompt"):
+                        prompt = pdata["prompt"]
+                except Exception:
+                    pass
+
+        # 2. Check ProductionPlan via JobItem
+        if not prompt and asset.job_id:
+            job_item = session.scalar(
+                select(JobItem).where(JobItem.job_id == asset.job_id, JobItem.asset_id == asset.id)
+            )
+            plan = session.scalar(select(ProductionPlan).where(ProductionPlan.consumed_job_id == asset.job_id))
+            if plan and plan.concepts_json:
+                try:
+                    concepts = json.loads(plan.concepts_json)
+                    idx = (job_item.item_index - 1) if job_item else 0
+                    if 0 <= idx < len(concepts):
+                        prompt = concepts[idx].get("prompt") or concepts[idx].get("title")
+                except Exception:
+                    pass
+
+        # 3. Check Concept linked directly to Job
+        if not prompt and asset.job_id:
+            job_rec = session.get(Job, asset.job_id)
+            if job_rec and job_rec.concept_id:
+                conc = session.get(Concept, job_rec.concept_id)
+                if conc and conc.prompt:
+                    prompt = conc.prompt
+
+        # 4. Fallback to AssetMetadata title or filename
+        if not prompt:
+            if asset.metadata_entry and asset.metadata_entry.title:
+                prompt = f"Commercial stock photo: {asset.metadata_entry.title}"
+            elif asset.filename:
+                prompt = f"Commercial stock photo concept for {asset.filename}"
+            else:
+                prompt = f"Commercial stock photo concept #{asset.id}"
+
+        return prompt
 
     def get_pending_asset(
         self,
@@ -423,6 +500,8 @@ class ReviewService:
 
             # 4. Apply status transition
             now = utc_now()
+            new_job_id: Optional[int] = None
+
             if action == "app":
                 asset.status = "approved"
                 if asset.metadata_entry:
@@ -431,13 +510,58 @@ class ReviewService:
                 asset.status = "rejected"
             elif action == "reg":
                 asset.status = "regenerating"
+                # Atomically enqueue regeneration job within this same transaction
+                prompt = self._resolve_prompt_for_asset(session, asset)
+                op_id = f"regen_{asset.id}_{int(time.time())}"
+                from stockforge.db.models import Job, JobEvent, JobItem
+                new_job = Job(
+                    type="image_batch",
+                    operation_id=op_id,
+                    created_by=user_rec.id,
+                    status="pending",
+                    reserved_usd_cents=0,
+                    attempts=0,
+                    max_attempts=3,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(new_job)
+                session.flush()
+                new_job_id = new_job.id
+
+                regen_event = JobEvent(
+                    job_id=new_job.id,
+                    event_type="regeneration_request",
+                    payload_json=json.dumps({
+                        "original_asset_id": asset.id,
+                        "original_job_id": asset.job_id,
+                        "prompt": prompt,
+                        "notes": notes or "User requested regeneration from /review",
+                    }),
+                    created_at=now,
+                )
+                session.add(regen_event)
+
+                item_rec = JobItem(
+                    job_id=new_job.id,
+                    item_index=1,
+                    stage="generating",
+                    status="pending",
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(item_rec)
+                logger.info("Enqueued regeneration job #%d for Asset #%d with prompt: %s", new_job.id, asset.id, prompt[:60])
 
             # 5. Persist review record
             review_entry = Review(
                 asset_id=asset_id,
                 telegram_user_id=user_rec.id,
                 decision=target_decision,
-                notes=notes or f"Review action '{target_decision}' via Telegram review wizard",
+                notes=notes or (
+                    f"Review action '{target_decision}' via Telegram review wizard"
+                    + (f" (Batch #{new_job_id})" if new_job_id else "")
+                ),
                 created_at=now,
             )
 
@@ -445,11 +569,12 @@ class ReviewService:
             session.commit()
 
             logger.info(
-                "Aset #%d berhasil di-%s oleh Admin ID %d: status='%s'",
+                "Aset #%d berhasil di-%s oleh Admin ID %d: status='%s' (New Job: %s)",
                 asset_id,
                 target_decision,
                 telegram_user_id,
                 asset.status,
+                new_job_id,
             )
             return ReviewResult(
                 success=True,
@@ -457,7 +582,9 @@ class ReviewService:
                 decision=target_decision,
                 new_status=asset.status,
                 already_completed=False,
-                message=f"Aset #{asset_id} berhasil di-{target_decision}!",
+                message=f"Aset #{asset_id} berhasil di-{target_decision}!"
+                + (f" Batch regenerasi #{new_job_id} telah dibuat." if new_job_id else ""),
+                new_job_id=new_job_id,
             )
 
 
@@ -465,16 +592,22 @@ class ReviewService:
 _default_review_service: Optional[ReviewService] = None
 
 
-def get_review_service(session_factory: Optional[Callable[[], Session]] = None) -> ReviewService:
+def get_review_service(
+    session_factory: Optional[Callable[[], Session]] = None,
+    queue_service: Optional[Any] = None,
+) -> ReviewService:
     global _default_review_service
-    if session_factory is not None:
-        _default_review_service = ReviewService(session_factory)
+    if session_factory is not None or queue_service is not None:
+        _default_review_service = ReviewService(session_factory=session_factory, queue_service=queue_service)
     elif _default_review_service is None:
         from stockforge.config import get_settings
         from stockforge.db.session import create_db_engine, create_session_factory
+        from stockforge.queue.service import QueueService
         settings = get_settings()
         engine = create_db_engine(settings.database_url)
-        _default_review_service = ReviewService(create_session_factory(engine))
+        sf = create_session_factory(engine)
+        qs = QueueService(engine=engine)
+        _default_review_service = ReviewService(session_factory=sf, queue_service=qs)
     return _default_review_service
 
 
@@ -732,7 +865,8 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     time_str = utc_now().strftime("%Y-%m-%d %H:%M:%S")
 
     user_label = html.escape(user_name or "Admin")
-    summary_note = f"\n\n{emoji} <b>Keputusan</b>: <code>{html.escape(res.decision.upper())}</code> oleh {user_label} ({time_str} UTC)"
+    job_suffix = f" (Batch Baru #{res.new_job_id})" if res.new_job_id else ""
+    summary_note = f"\n\n{emoji} <b>Keputusan</b>: <code>{html.escape(res.decision.upper())}{job_suffix}</code> oleh {user_label} ({time_str} UTC)"
 
     try:
         # If it's a photo caption
@@ -756,4 +890,22 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     except Exception as e:
         logger.warning("Gagal mengedit pesan review: %s", e)
 
-    await query.answer(f"Aset #{asset_id} berhasil di-{res.decision}!", show_alert=False)
+    # Kirim konfirmasi detail jika regenerasi berhasil di-enqueue
+    if res.decision == "regenerate" and res.new_job_id and query.message:
+        try:
+            regen_text = (
+                f"🔄 <b>Proses Regenerasi Dimulai untuk Aset #{asset_id}</b>\n\n"
+                f"• <b>Job Baru:</b> Batch #{res.new_job_id}\n"
+                f"• <b>Status:</b> Antrean produksi gambar baru\n\n"
+                f"💡 <i>Gunakan perintah <code>/status {res.new_job_id}</code> untuk memantau kemajuan atau tunggu notifikasi saat gambar selesai dibuat.</i>"
+            )
+            await query.message.reply_text(regen_text, parse_mode=ParseMode.HTML)
+        except Exception as rx:
+            logger.warning("Gagal mengirim pesan konfirmasi regenerasi: %s", rx)
+
+    ans_msg = (
+        f"Regenerasi Aset #{asset_id} dimulai (Batch #{res.new_job_id})!"
+        if (res.decision == "regenerate" and res.new_job_id)
+        else f"Aset #{asset_id} berhasil di-{res.decision}!"
+    )
+    await query.answer(ans_msg, show_alert=False)
