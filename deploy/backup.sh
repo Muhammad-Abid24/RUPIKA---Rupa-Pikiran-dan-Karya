@@ -52,3 +52,4 @@ if [ -f "$CHECKSUM_FILE" ]; then
 fi
 echo "=== [RUPIKA] Backup Selesai dengan Sukses ==="
 exit 0
+

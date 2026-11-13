@@ -157,3 +157,4 @@ def test_live_docker_backup_and_rollback():
     run_check = subprocess.run(check_cmd, capture_output=True, text=True, timeout=30)
     assert run_check.returncode == 0
     assert "ok" in run_check.stdout
+
