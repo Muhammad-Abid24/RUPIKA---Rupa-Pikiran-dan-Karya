@@ -90,6 +90,11 @@ class Settings(BaseSettings):
         return ids
 
     @property
+    def admin_ids(self) -> List[int]:
+        """Backward-compatible alias for admin_ids_list."""
+        return self.admin_ids_list
+
+    @property
     def resolved_data_dir(self) -> Path:
         """Resolve path to data directory."""
         return Path(self.data_dir).resolve()

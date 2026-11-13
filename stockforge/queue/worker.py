@@ -117,7 +117,7 @@ class Worker:
         try:
             settings = get_settings()
             token = settings.telegram_bot_token.get_secret_value() if settings.telegram_bot_token else None
-            admin_ids = settings.admin_ids
+            admin_ids = settings.admin_ids_list
             if not token or not admin_ids:
                 return
 
