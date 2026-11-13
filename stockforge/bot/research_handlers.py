@@ -57,6 +57,12 @@ async def research_command(
     topic = " ".join(context.args) if context.args else "Commercial Stock Photography Trends"
     user_tg_id = update.effective_user.id if update.effective_user else 0
 
+    if update.effective_chat:
+        try:
+            await update.effective_chat.send_action("typing")
+        except Exception:
+            pass
+
     with session_factory() as session:
         user_db_id = _get_admin_db_user_id(session, user_tg_id)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Optional
-from telegram.error import Conflict, TelegramError
+from telegram.error import Conflict, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from stockforge.bot.handlers import health_handler, help_handler, start_handler
@@ -34,7 +34,17 @@ class BotService:
                 "Harap isi TELEGRAM_BOT_TOKEN di .env atau berikan parameter token."
             )
 
-        app = ApplicationBuilder().token(self.token).build()
+        app = (
+            ApplicationBuilder()
+            .token(self.token)
+            .concurrent_updates(True)
+            .connect_timeout(30.0)
+            .read_timeout(30.0)
+            .write_timeout(30.0)
+            .pool_timeout(30.0)
+            .get_updates_read_timeout(45.0)
+            .build()
+        )
 
         # Register command handlers
         app.add_handler(CommandHandler("start", start_handler))
@@ -146,6 +156,8 @@ class BotService:
                     await context.application.updater.stop()
                 if context.application:
                     await context.application.stop()
+            elif isinstance(err, TimedOut) or (err and "timed out" in str(err).lower()):
+                logger.warning("Koneksi jaringan polling Telegram timeout (sementara): %s. Polling otomatis melanjutkan...", err)
             elif isinstance(err, TelegramError):
                 logger.error("Terjadi galat Telegram: %s", err)
             else:
