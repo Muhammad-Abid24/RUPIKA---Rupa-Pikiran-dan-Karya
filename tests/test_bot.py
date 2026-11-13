@@ -139,3 +139,26 @@ def test_cli_bot_help():
     result = runner.invoke(app, ["bot", "--help"])
     assert result.exit_code == 0
     assert "Start Telegram bot" in result.output
+
+
+def test_resilient_httpx_request_retries_on_stale_disconnect():
+    """Verify ResilientHTTPXRequest transparently catches and retries RemoteProtocolError."""
+    from stockforge.bot.service import ResilientHTTPXRequest
+    from telegram.error import NetworkError
+
+    req = ResilientHTTPXRequest(connection_pool_size=4)
+    attempts = 0
+
+    async def mock_super_do_request(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise NetworkError("httpx.RemoteProtocolError: Server disconnected without sending a response")
+        return (200, b'{"ok": true, "result": []}')
+
+    with patch("telegram.request.HTTPXRequest.do_request", side_effect=mock_super_do_request):
+        status, content = asyncio.run(req.do_request("https://api.telegram.org/test", "POST"))
+        assert status == 200
+        assert b'"ok": true' in content
+        assert attempts == 2  # Succeeded on retry without bubbling error
+

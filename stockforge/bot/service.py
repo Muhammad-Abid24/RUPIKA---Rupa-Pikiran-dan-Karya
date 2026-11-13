@@ -3,15 +3,64 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Optional
+import socket
+from typing import Any, Optional, Tuple
 from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
 from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler, CommandHandler, ContextTypes
+from telegram.request import HTTPXRequest
 
 from stockforge.bot.handlers import health_handler, help_handler, start_handler
 from stockforge.bot.review import review_callback_handler, review_command_handler
 from stockforge.config import get_settings
 
 logger = logging.getLogger("stockforge.bot.service")
+
+
+def _build_tcp_keepalive_socket_options() -> list[Tuple[int, int, int]]:
+    """Configure TCP Keepalive socket options to keep long-polling connections persistently active."""
+    options = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 15))
+    elif hasattr(socket, "TCP_KEEPALIVE"):
+        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 15))
+    if hasattr(socket, "TCP_KEEPINTVL"):
+        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5))
+    if hasattr(socket, "TCP_KEEPCNT"):
+        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3))
+    return options
+
+
+class ResilientHTTPXRequest(HTTPXRequest):
+    """Custom HTTPXRequest that transparently retries on dropped or stale sockets.
+    
+    Prevents httpx.RemoteProtocolError and server TCP FIN disconnections from interrupting
+    the long-polling loop or surfacing as alarming warnings in user logs.
+    """
+
+    async def do_request(self, *args: Any, **kwargs: Any) -> tuple[int, bytes]:
+        max_transient_retries = 3
+        for attempt in range(max_transient_retries):
+            try:
+                return await super().do_request(*args, **kwargs)
+            except NetworkError as err:
+                err_str = str(err).lower()
+                is_stale_disconnect = (
+                    "remoteprotocolerror" in err_str
+                    or "server disconnected without sending a response" in err_str
+                    or "connection reset" in err_str
+                    or "eof occurred in violation of protocol" in err_str
+                    or "broken pipe" in err_str
+                )
+                if is_stale_disconnect and attempt < (max_transient_retries - 1):
+                    logger.debug(
+                        "Koneksi stale terputus oleh server (%s). Melakukan retry transparan (percobaan %d/%d)...",
+                        err,
+                        attempt + 1,
+                        max_transient_retries,
+                    )
+                    await asyncio.sleep(0.3 * (attempt + 1))
+                    continue
+                raise
 
 
 class BotService:
@@ -36,20 +85,32 @@ class BotService:
                 "Harap isi TELEGRAM_BOT_TOKEN di .env atau berikan parameter token."
             )
 
+        sock_opts = _build_tcp_keepalive_socket_options()
+
+        main_request = ResilientHTTPXRequest(
+            connection_pool_size=16,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0,
+            socket_options=sock_opts,
+        )
+
+        get_updates_request = ResilientHTTPXRequest(
+            connection_pool_size=8,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=30.0,
+            socket_options=sock_opts,
+        )
+
         app = (
             ApplicationBuilder()
             .token(self.token)
             .concurrent_updates(True)
-            .connect_timeout(30.0)
-            .read_timeout(30.0)
-            .write_timeout(30.0)
-            .pool_timeout(30.0)
-            .get_updates_connect_timeout(30.0)
-            .get_updates_read_timeout(45.0)
-            .get_updates_write_timeout(30.0)
-            .get_updates_pool_timeout(30.0)
-            .connection_pool_size(16)
-            .get_updates_connection_pool_size(8)
+            .request(main_request)
+            .get_updates_request(get_updates_request)
             .build()
         )
 
@@ -175,8 +236,8 @@ class BotService:
                 or "remoteprotocolerror" in err_str
                 or "disconnected without sending a response" in err_str
             ):
-                logger.warning(
-                    "Koneksi polling Telegram terputus sementara: %s. Polling otomatis menyambung kembali...",
+                logger.debug(
+                    "Koneksi polling Telegram disegarkan kembali (%s). Polling aktif menyambung otomatis...",
                     err,
                 )
             elif isinstance(err, TelegramError):
@@ -201,15 +262,16 @@ class BotService:
         self,
         drop_pending_updates: bool = False,
         bootstrap_retries: int = -1,
-        poll_interval: float = 0.5,
-        timeout: int = 20,
+        poll_interval: float = 0.0,
+        timeout: int = 10,
     ) -> None:
         """Start long polling with graceful shutdown on conflict."""
         app = self.build_application()
         logger.info(
-            "Memulai Telegram bot polling (drop_pending_updates=%s, bootstrap_retries=%s)...",
+            "Memulai Telegram bot polling (drop_pending_updates=%s, bootstrap_retries=%s, timeout=%ds)...",
             drop_pending_updates,
             bootstrap_retries,
+            timeout,
         )
         app.run_polling(
             drop_pending_updates=drop_pending_updates,

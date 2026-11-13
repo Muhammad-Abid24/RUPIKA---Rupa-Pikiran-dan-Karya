@@ -199,10 +199,11 @@ class Worker:
         import httpx
 
         url = f"https://api.telegram.org/bot{token}/{method}"
-        timeout = httpx.Timeout(connect=15.0, read=timeout_secs, write=15.0, pool=15.0)
+        timeout = httpx.Timeout(connect=20.0, read=timeout_secs, write=20.0, pool=20.0)
+        max_retries = 3
         for attempt in range(max_retries + 1):
             try:
-                with httpx.Client(timeout=timeout) as client:
+                with httpx.Client(timeout=timeout, http2=False) as client:
                     resp = client.post(url, json=payload)
                     return resp
             except (httpx.TimeoutException, httpx.NetworkError, ssl.SSLError) as ex:
@@ -212,6 +213,10 @@ class Worker:
                 logger.warning("Gagal memanggil Telegram %s (attempt %d/%d): %s", method, attempt + 1, max_retries + 1, ex)
                 return None
             except Exception as ex:
+                err_str = str(ex).lower()
+                if ("remoteprotocolerror" in err_str or "server disconnected" in err_str or "eof" in err_str) and attempt < max_retries:
+                    time.sleep(1.0 * (attempt + 1))
+                    continue
                 logger.warning("Ekspepsi tak terduga memanggil Telegram %s: %s", method, ex)
                 return None
         return None
