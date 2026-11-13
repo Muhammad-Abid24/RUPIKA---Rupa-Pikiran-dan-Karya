@@ -25,6 +25,7 @@ COPY stockforge/ stockforge/
 COPY alembic/ alembic/
 COPY alembic.ini ./
 COPY config/ config/
+COPY deploy/ deploy/
 
 # Install the project into the virtual environment
 RUN --mount=type=cache,target=/root/.cache/uv \

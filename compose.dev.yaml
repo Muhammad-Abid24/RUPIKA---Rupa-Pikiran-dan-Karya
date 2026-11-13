@@ -9,6 +9,7 @@ services:
     volumes:
       - ./stockforge:/app/stockforge:ro
       - ./alembic:/app/alembic:ro
+      - ./deploy:/app/deploy:ro
       - stockforge_data:/data
       - ./config:/app/config:ro
 
@@ -20,6 +21,7 @@ services:
     volumes:
       - ./stockforge:/app/stockforge:ro
       - ./alembic:/app/alembic:ro
+      - ./deploy:/app/deploy:ro
       - stockforge_data:/data
       - ./config:/app/config:ro
 
@@ -31,6 +33,7 @@ services:
     volumes:
       - ./stockforge:/app/stockforge:ro
       - ./alembic:/app/alembic:ro
+      - ./deploy:/app/deploy:ro
       - stockforge_data:/data
       - ./config:/app/config:ro
 
