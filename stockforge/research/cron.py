@@ -92,3 +92,4 @@ def format_schedule_key(
     # Minute-level canonical key
     timestamp_str = dt_tz.strftime("%Y%m%d_%H%M")
     return f"{prefix}_{timestamp_str}"
+

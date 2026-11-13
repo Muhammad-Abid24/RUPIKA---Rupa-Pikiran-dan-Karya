@@ -208,3 +208,4 @@ def test_budget_exhaustion_pauses_auto_mode(auto_research_env):
         alert = session.query(TelegramOutbox).filter(TelegramOutbox.event_key.like("%budget_exceeded%")).first()
         assert alert is not None
         assert "Auto Research Dijeda" in alert.payload_json
+
