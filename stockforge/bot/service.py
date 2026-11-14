@@ -118,8 +118,8 @@ class BotService:
         main_request = ResilientHTTPXRequest(
             connection_pool_size=16,
             connect_timeout=15.0,
-            read_timeout=20.0,
-            write_timeout=20.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
             pool_timeout=15.0,
             socket_options=sock_opts,
             httpx_kwargs={
@@ -134,7 +134,7 @@ class BotService:
         get_updates_request = ResilientHTTPXRequest(
             connection_pool_size=1,
             connect_timeout=15.0,
-            read_timeout=5.0,
+            read_timeout=25.0,  # Must exceed polling timeout (10s) to avoid client drop triggering 409
             write_timeout=15.0,
             pool_timeout=15.0,
             socket_options=sock_opts,
@@ -369,15 +369,19 @@ def start_bot(
     """Entry point to launch the bot service with continuous resilience and auto-restart."""
     import time
 
-    service = BotService(token=token)
     attempt = 0
     while True:
+        loop = None
         try:
+            # Ensure a fresh, non-closed asyncio event loop is active for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            service = BotService(token=token)
             service.run_polling(drop_pending_updates=drop_pending_updates)
             if service.conflict_detected:
                 logger.warning("Bot mendeteksi konflik polling 409. Istirahat 5 detik sebelum menyambung kembali...")
                 time.sleep(5)
-                service.conflict_detected = False
                 continue
             logger.info("Polling Telegram selesai secara normal. Menyambung kembali polling dalam 1 detik...")
             time.sleep(1)
@@ -398,4 +402,11 @@ def start_bot(
                 continue
             logger.error("Galat tak terduga pada bot service: %s. Memulai ulang dalam 3 detik...", ex, exc_info=True)
             time.sleep(3)
+        finally:
+            if loop is not None:
+                try:
+                    if not loop.is_closed():
+                        loop.close()
+                except Exception:
+                    pass
 

@@ -196,6 +196,7 @@ class ReviewService:
         job_id: Optional[int] = None,
     ) -> Optional[Asset]:
         """Fetch asset pending review by asset ID, job ID, or retrieve the next eligible asset."""
+        valid_statuses = ["qc_passed", "review_pending", "qc_failed"]
         with self.session_factory() as session:
             if asset_id is not None:
                 stmt = select(Asset).where(Asset.id == asset_id)
@@ -211,7 +212,7 @@ class ReviewService:
                     select(Asset)
                     .where(
                         Asset.job_id == job_id,
-                        Asset.status.in_(["qc_passed", "review_pending", "generated", "qc_failed"]),
+                        Asset.status.in_(valid_statuses),
                     )
                     .order_by(Asset.id.desc())
                     .limit(1)
@@ -226,7 +227,7 @@ class ReviewService:
             if asset_id is None and job_id is None:
                 stmt = (
                     select(Asset)
-                    .where(Asset.status.in_(["qc_passed", "review_pending", "generated", "qc_failed"]))
+                    .where(Asset.status.in_(valid_statuses))
                     .order_by(Asset.id.desc())
                     .limit(1)
                 )
@@ -734,6 +735,9 @@ def get_review_service(
 @require_admin
 async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /review command providing interactive visual review wizard."""
+    user_id = update.effective_user.id if update.effective_user else 0
+    logger.info("review_command_handler dipanggil (user=%s, args=%s)", user_id, context.args if context else None)
+
     # 1. Tampilkan typing indicator ke user
     if update.effective_chat and context.bot:
         try:
@@ -751,15 +755,25 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         if context.args and len(context.args) > 0 and context.args[0].isdigit():
             target_id = int(context.args[0])
 
+        # If user didn't specify a target ID, check if there is an active generation job in flight
+        active_job = service.get_active_generation_job(job_id=target_id if target_id else None)
+        if not target_id and active_job:
+            # Check if this active job already has an asset ready for review
+            asset = service.get_pending_asset(job_id=active_job.id)
+            if not asset:
+                msg = (
+                    f"⏳ <b>Proses generasi/QC gambar sedang berjalan</b> (Batch #{active_job.id}).\n\n"
+                    f"<i>Worker sedang menyelesaikan pembuatan gambar dan verifikasi Vision QC. Mohon tunggu sejenak, atau pantau kemajuan dengan perintah <code>/status {active_job.id}</code>.</i>"
+                )
+                if update.effective_message:
+                    await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
+                return
+
         asset = service.get_pending_asset(asset_id=target_id)
         if not asset and target_id is not None:
             asset = service.get_pending_asset(job_id=target_id)
 
         if not asset:
-            active_job = service.get_active_generation_job(job_id=target_id if target_id else None)
-            if not active_job and target_id is not None:
-                active_job = service.get_active_generation_job()
-
             if active_job:
                 msg = (
                     f"⏳ <b>Proses generate gambar belum selesai</b> (Batch #{active_job.id}).\n\n"
@@ -778,6 +792,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
         if not effective_msg:
             return
 
+        logger.info("Menyiapkan review untuk Asset #%d (job_id=%s, file=%s, status=%s)", asset.id, asset.job_id, asset.filename, asset.status)
         token = service.generate_token(asset.id)
         txt_content, is_lengthy = service.build_metadata_export_txt(asset)
         summary_text, markup = service.build_review_message_and_keyboard(
@@ -826,6 +841,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                             reply_markup=markup,
                         )
                 photo_sent = True
+                logger.info("Foto review Asset #%d berhasil dikirim ke Telegram", asset.id)
             except Exception as e:
                 logger.warning("Gagal mengirim preview foto dengan caption penuh: %s. Mencoba foto dengan caption pendek...", e)
                 try:
@@ -850,6 +866,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                         reply_markup=markup,
                     )
                     photo_sent = True
+                    logger.info("Foto review fallback Asset #%d berhasil dikirim ke Telegram", asset.id)
                 except Exception as e2:
                     logger.error("Gagal mengirim preview foto fallback: %s. Mengirim teks biasa.", e2)
 
