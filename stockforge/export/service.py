@@ -100,7 +100,7 @@ class ExportService:
         
         Guarantees:
         - Rejects unapproved or unlicensed assets (raises ComplianceExportError).
-        - Enforces official Adobe Stock CSV headers, <=30 char filenames, <=70 char titles, <=40 keywords.
+        - Enforces official Adobe Stock CSV headers, <=30 char filenames, <=70 char titles, 40-50 keywords.
         - Packs JPEG files, adobe_metadata.csv, and manifest.json into a ZIP archive safely.
         - Defends against Zip-Slip vulnerabilities.
         - Transitions asset.status to 'exported'.
@@ -154,8 +154,8 @@ class ExportService:
                 assert meta is not None
 
                 kw_list = json.loads(meta.keywords_json)
-                # Form comma-separated keyword string
-                keywords_str = ", ".join(kw_list[:40])
+                # Form comma-separated keyword string (up to 50 keywords)
+                keywords_str = ", ".join(kw_list[:50])
 
                 csv_rows.append(
                     AdobeCsvRow(

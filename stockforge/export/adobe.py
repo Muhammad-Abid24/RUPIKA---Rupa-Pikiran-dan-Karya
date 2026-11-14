@@ -55,7 +55,7 @@ def validate_asset_compliance(asset: Asset) -> Tuple[bool, List[str]]:
     Guarantees:
     1. Human review mandatory: status must be 'approved'.
     2. Commercial license verified: license_verified must be True and evidence non-empty.
-    3. Metadata present: title <= 70 chars, keywords <= 40 items, category in 1..21.
+    3. Metadata present: title <= 70 chars, keywords 40..50 items, category in 1..21.
     4. Generative AI disclosure required: flagged in manifest.
     5. Physical file exists.
     """
@@ -94,8 +94,10 @@ def validate_asset_compliance(asset: Asset) -> Tuple[bool, List[str]]:
                 kw_list = json.loads(meta.keywords_json)
                 if not isinstance(kw_list, list) or len(kw_list) == 0:
                     violations.append("Daftar keyword kosong atau format tidak valid")
-                elif len(kw_list) > 40:
-                    violations.append(f"Jumlah keyword ({len(kw_list)}) melebihi batas MVP (40)")
+                elif len(kw_list) < 40:
+                    violations.append(f"Jumlah keyword ({len(kw_list)}) kurang dari batas minimum (40)")
+                elif len(kw_list) > 50:
+                    violations.append(f"Jumlah keyword ({len(kw_list)}) melebihi batas maksimum (50)")
             except Exception as e:
                 violations.append(f"Gagal mem-parse keywords_json: {e}")
 

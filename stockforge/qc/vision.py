@@ -112,12 +112,12 @@ def clean_title(raw_title: Optional[str], max_len: int = 70) -> str:
 
 def clean_keywords(
     raw_keywords: Union[List[str], str, None],
-    max_count: int = 40,
+    max_count: int = 50,
 ) -> List[str]:
     """Clean, filter anti-hallucination/brand terms, deduplicate and cap keywords at max_count.
     
     Guarantees:
-    - Conservative MVP limit <= 40 items.
+    - Keywords limit: maximum 50 items (minimum 40 expected for full stock compliance).
     - Relevant ordering preserved.
     - Case-insensitive deduplication.
     - Scrubbing of trademarked brand names and AI tool names.
@@ -471,11 +471,11 @@ class VisionQcService:
         model_override: Optional[str] = None,
         safe_fallback: bool = True,
     ) -> AssetMetadata:
-        """Generate compliant stock metadata (title <= 70 chars, keywords <= 40, category 1-21).
+        """Generate compliant stock metadata (title <= 70 chars, keywords 40-50, category 1-21).
         
         Guarantees:
         - Strict length cap on title (<= 70 chars) with word-boundary truncation.
-        - Strict keyword cap (<= 40 items) with anti-hallucination / trademark filtering.
+        - Strict keyword limits (minimum 40, maximum 50 items) with anti-hallucination / trademark filtering.
         - Validated Adobe Stock category ID (1-21).
         - Persists to asset_metadata table.
         - Graceful recovery: malformed outputs produce safe placeholder metadata flagged for review.
@@ -495,8 +495,9 @@ class VisionQcService:
 
         prompt = (
             "Analyze this stock photograph and generate commercial metadata for Adobe Stock. "
-            "Output JSON with: title (concise, <= 70 characters), keywords (20-40 keywords, "
-            "strictly relevant and visible, ordered by relevance, no brand names), category_id (1-21), "
+            "Output JSON with: title (concise, <= 70 characters), "
+            "keywords (array of 40 to 50 keywords, strictly relevant and visible, ordered by relevance, "
+            "no brand names, minimum 40 tags, maximum 50 tags), category_id (1-21), "
             "content_type ('photo')."
         )
 
@@ -518,12 +519,12 @@ class VisionQcService:
             content_type = str(analysis_dict.get("content_type", "photo")).lower()
 
             final_title = clean_title(raw_title, max_len=70)
-            final_keywords = clean_keywords(raw_keywords, max_count=40)
+            final_keywords = clean_keywords(raw_keywords, max_count=50)
             final_category = validate_category_id(raw_category)
 
-            if len(final_keywords) < 5:
+            if len(final_keywords) < 40:
                 requires_review = True
-                review_reasons.append("Jumlah keyword kurang dari batas minimum (5)")
+                review_reasons.append(f"Jumlah keyword ({len(final_keywords)}) kurang dari batas minimum (40)")
 
             if not final_category:
                 requires_review = True
