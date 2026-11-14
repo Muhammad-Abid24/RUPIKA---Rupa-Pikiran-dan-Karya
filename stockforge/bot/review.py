@@ -605,6 +605,23 @@ class ReviewService:
                     asset.metadata_entry.metadata_reviewed_at = now
             elif action == "rej":
                 asset.status = "rejected"
+                # To save storage, physically delete the raw image file and metadata entry
+                if asset.raw_path:
+                    try:
+                        raw_file = Path(asset.raw_path)
+                        if raw_file.is_file():
+                            raw_file.unlink(missing_ok=True)
+                            logger.info("File gambar mentah aset #%d berhasil dihapus dari storage (%s)", asset.id, raw_file)
+                        for companion in (raw_file.with_suffix(".txt"), raw_file.with_suffix(".json")):
+                            if companion.is_file():
+                                companion.unlink(missing_ok=True)
+                    except Exception as del_err:
+                        logger.warning("Gagal menghapus file gambar fisik aset #%d: %s", asset.id, del_err)
+                    asset.raw_path = ""
+
+                if asset.metadata_entry:
+                    session.delete(asset.metadata_entry)
+                    asset.metadata_entry = None
             elif action == "reg":
                 asset.status = "regenerating"
                 # Atomically enqueue regeneration job within this same transaction
@@ -1053,3 +1070,40 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         else f"Aset #{asset_id} berhasil di-{res.decision}!"
     )
     await query.answer(ans_msg, show_alert=False)
+
+
+def cleanup_rejected_assets(session_factory: Callable[[], Session]) -> dict[str, int]:
+    """Clean up physical storage files and metadata for any assets marked as rejected."""
+    cleaned_count = 0
+    files_deleted = 0
+    with session_factory() as session:
+        stmt = select(Asset).where(Asset.status == "rejected")
+        rejected_assets = list(session.scalars(stmt).all())
+        has_modifications = False
+        for asset in rejected_assets:
+            item_modified = False
+            if asset.raw_path:
+                try:
+                    p = Path(asset.raw_path)
+                    if p.is_file():
+                        p.unlink(missing_ok=True)
+                        files_deleted += 1
+                        logger.info("Pembersihan storage: file aset reject #%d dihapus (%s)", asset.id, p)
+                    for companion in (p.with_suffix(".txt"), p.with_suffix(".json")):
+                        if companion.is_file():
+                            companion.unlink(missing_ok=True)
+                except Exception as ex:
+                    logger.warning("Gagal membersihkan file gambar aset reject #%d: %s", asset.id, ex)
+                asset.raw_path = ""
+                item_modified = True
+            if asset.metadata_entry:
+                session.delete(asset.metadata_entry)
+                asset.metadata_entry = None
+                item_modified = True
+            if item_modified:
+                cleaned_count += 1
+                has_modifications = True
+        if has_modifications:
+            session.commit()
+    return {"cleaned_assets": cleaned_count, "files_deleted": files_deleted}
+

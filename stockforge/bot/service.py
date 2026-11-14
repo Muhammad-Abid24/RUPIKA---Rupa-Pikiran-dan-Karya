@@ -150,6 +150,13 @@ class BotService:
 
         async def _on_post_init(application: Application) -> None:
             gateway_alerts.on_telegram_reconnected()
+            try:
+                from stockforge.bot.review import cleanup_rejected_assets
+                res = cleanup_rejected_assets(get_sf())
+                if res.get("files_deleted", 0) > 0 or res.get("cleaned_assets", 0) > 0:
+                    logger.info("Pembersihan aset rejected saat startup: %s", res)
+            except Exception as cl_err:
+                logger.warning("Gagal membersihkan aset rejected saat startup: %s", cl_err)
 
         app = (
             ApplicationBuilder()

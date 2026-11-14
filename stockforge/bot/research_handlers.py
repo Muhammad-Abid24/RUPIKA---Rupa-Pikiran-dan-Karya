@@ -1,6 +1,8 @@
 """Telegram handlers for niche selection, plan review, and production approval (SF-021)."""
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import html
 import json
 import logging
@@ -33,6 +35,38 @@ from stockforge.research.planner import ProductionPlanner, compute_plan_hash
 from stockforge.research.settings import ResearchSettingsManager
 
 logger = logging.getLogger("stockforge.bot.research_handlers")
+
+
+@asynccontextmanager
+async def continuous_typing(chat: Optional[Any], bot: Optional[Any], interval: float = 4.0):
+    """Keep the Telegram 'typing' action alive for long-running operations."""
+    if not chat or not bot:
+        yield
+        return
+
+    stop_event = asyncio.Event()
+
+    async def _heartbeat():
+        while not stop_event.is_set():
+            try:
+                await bot.send_chat_action(chat_id=chat.id, action="typing")
+            except Exception:
+                pass
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=interval)
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+
+    task = asyncio.create_task(_heartbeat())
+    try:
+        yield
+    finally:
+        stop_event.set()
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 def _get_admin_db_user_id(session: Session, telegram_id: int) -> int:
@@ -98,7 +132,8 @@ async def research_command(
             from stockforge.research.service import ResearchService
             r_service = ResearchService(session_factory=session_factory, router=router)
             try:
-                discovered = await r_service.discover_niches(domain_query=topic, count=2)
+                async with continuous_typing(update.effective_chat, context.bot):
+                    discovered = await r_service.discover_niches(domain_query=topic, count=2)
                 for item in discovered:
                     name = item.get("name") or f"{topic} — Niche"
                     rationale = item.get("rationale") or "High commercial demand in stock marketplaces."

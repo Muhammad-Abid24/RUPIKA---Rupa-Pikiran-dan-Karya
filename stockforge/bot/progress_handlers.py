@@ -5,7 +5,7 @@ import html
 import logging
 from typing import Callable, Optional
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -137,6 +137,12 @@ async def jobs_command(
     session_factory: Callable[[], Session],
 ) -> None:
     """Handle /jobs command displaying queue status and recent batch history."""
+    if update.effective_chat and context.bot:
+        try:
+            await context.bot.send_chat_action(chat_id=update.effective_chat.id, action=ChatAction.TYPING)
+        except Exception:
+            pass
+
     STATUS_ICONS = {
         "running": "⏳",
         "reserved": "⏳",
