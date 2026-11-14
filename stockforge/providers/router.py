@@ -116,6 +116,13 @@ class ProviderRouter:
         if not yaml_path.exists():
             raise FileNotFoundError(f"Konfigurasi models.yaml tidak ditemukan: {yaml_path}")
 
+        if env_vars is None:
+            try:
+                import dotenv
+                dotenv.load_dotenv()
+            except Exception:
+                pass
+
         env = env_vars if env_vars is not None else os.environ
 
         with open(yaml_path, "r", encoding="utf-8") as f:

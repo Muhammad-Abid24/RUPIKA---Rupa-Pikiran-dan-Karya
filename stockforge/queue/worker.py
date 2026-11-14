@@ -65,7 +65,13 @@ class Worker:
 
         # Load router
         router = None
-        for cfg_path in [Path("config/models.yaml"), Path("/app/config/models.yaml")]:
+        config_dir = Path(os.environ.get("CONFIG_DIR", "config"))
+        candidate_configs = [
+            config_dir / "models.yaml",
+            Path("config/models.yaml"),
+            Path("/app/config/models.yaml"),
+        ]
+        for cfg_path in candidate_configs:
             if cfg_path.exists():
                 reg = ProviderRegistry()
                 r = ProviderRouter(reg)
@@ -73,8 +79,10 @@ class Worker:
                     r.load_from_yaml(cfg_path)
                     router = r
                     break
-                except Exception:
-                    pass
+                except Exception as ex:
+                    logger.warning("Gagal memuat ProviderRouter dari konfigurasi %s: %s", cfg_path, ex)
+        if router is None:
+            logger.error("ProviderRouter tidak dapat dimuat: tidak ada file models.yaml yang ditemukan di %s", candidate_configs)
 
         # Resolve prompt from JobEvent (e.g. regeneration_request), Concept, or ProductionPlan
         prompt = f"Commercial stock photo concept #{item_index}"

@@ -207,7 +207,8 @@ class BotService:
             return QueueService(engine=create_db_engine(get_settings().database_url))
 
         def get_router():
-            for cfg_candidate in [Path("config/models.yaml"), Path("/app/config/models.yaml")]:
+            config_dir = Path(os.environ.get("CONFIG_DIR", "config"))
+            for cfg_candidate in [config_dir / "models.yaml", Path("config/models.yaml"), Path("/app/config/models.yaml")]:
                 if cfg_candidate.exists():
                     reg = ProviderRegistry()
                     r = ProviderRouter(reg)
