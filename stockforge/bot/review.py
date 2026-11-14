@@ -631,7 +631,8 @@ class ReviewService:
                 from stockforge.db.models import BudgetLedger, Job, JobEvent, JobItem
                 from stockforge.budget.service import BudgetService, BudgetExceededError
 
-                regen_cost_cents = 5  # Cost approval for regenerated asset
+                from stockforge.providers.pricing import resolve_image_unit_cost_usd
+                regen_cost_cents = max(1, int(round(resolve_image_unit_cost_usd() * 100.0)))  # Valid cost per image
                 budget_svc = BudgetService(session_factory=self.session_factory)
                 daily_committed = budget_svc.get_daily_committed_cents(session)
                 if daily_committed + regen_cost_cents > budget_svc.daily_limit_cents:

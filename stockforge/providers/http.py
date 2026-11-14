@@ -250,6 +250,10 @@ class HttpImageProvider(ImageProvider):
         img.save(buf, format="JPEG", quality=95)
         jpeg_bytes = buf.getvalue()
 
+        from stockforge.providers.pricing import resolve_image_unit_cost_usd
+        unit_cost = resolve_image_unit_cost_usd(model)
+        resolved_cents = max(1, int(round(unit_cost * 100.0)))
+
         return ProviderImageResponse(
             request_id=req_id,
             provider=self.provider_name,
@@ -260,8 +264,8 @@ class HttpImageProvider(ImageProvider):
             height=actual_h,
             format="JPEG",
             mime_type="image/jpeg",
-            estimated_cost_cents=10,
-            actual_cost_cents=10,
+            estimated_cost_cents=resolved_cents,
+            actual_cost_cents=resolved_cents,
             raw_response_redacted=str(sanitized_payload),
         )
 

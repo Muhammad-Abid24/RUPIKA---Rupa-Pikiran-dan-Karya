@@ -388,7 +388,10 @@ async def research_callback_handler(
                 for idx, niche in enumerate(selected_niches)
             ]
             image_count = len(concepts)
-            cost_cents = image_count * 4  # 4 cents ($0.04) per image
+
+        from stockforge.providers.pricing import estimate_production_cost
+
+        cost_cents, cost_usd, model_name = estimate_production_cost(image_count)
 
         # Create immutable production plan
         plan = planner.create_plan(
@@ -396,19 +399,18 @@ async def research_callback_handler(
             selected_niches=selected_niches,
             concepts=concepts,
             image_count=image_count,
-            provider_routes={"image": "openai-dalle3"},
+            provider_routes={"image": model_name},
             estimated_max_cost_cents=cost_cents,
             expires_in_hours=24,
         )
 
-        cost_usd = cost_cents / 100.0
         hash_short = plan.plan_hash[:8]
 
         text = (
             f"📋 <b>Rencana Produksi Siap Ditinjau (Plan #{plan.id})</b>\n\n"
             f"• <b>Niche Terpilih:</b> {html.escape(', '.join(selected_niches))}\n"
             f"• <b>Jumlah Aset:</b> <code>{image_count} gambar</code>\n"
-            f"• <b>Rute Model:</b> <code>openai (dall-e-3)</code>\n"
+            f"• <b>Rute Model:</b> <code>{html.escape(model_name)}</code>\n"
             f"• <b>Estimasi Biaya Maksimum:</b> <code>${cost_usd:.2f} USD</code>\n"
             f"• <b>Lisensi Komersial:</b> Terverifikasi hak redistribusi stok\n"
             f"• <b>Masa Berlaku Otorisasi:</b> 24 jam (sampai {plan.expires_at.strftime('%Y-%m-%d %H:%M UTC')})\n"
