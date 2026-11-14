@@ -8,7 +8,7 @@ import socket
 from typing import Any, Optional, Tuple
 import httpx
 from telegram import Update
-from telegram.constants import ParseMode
+from telegram.constants import ChatAction, ParseMode
 from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
@@ -134,7 +134,7 @@ class BotService:
         get_updates_request = ResilientHTTPXRequest(
             connection_pool_size=1,
             connect_timeout=15.0,
-            read_timeout=25.0,  # Must exceed polling timeout (10s) to avoid client drop triggering 409
+            read_timeout=35.0,  # Must comfortably exceed polling timeout (10s) to avoid client drop triggering 409
             write_timeout=15.0,
             pool_timeout=15.0,
             socket_options=sock_opts,
@@ -157,7 +157,7 @@ class BotService:
             .build()
         )
 
-        # 0. Global logger for all incoming updates
+        # 0. Global logger and typing indicator for all incoming user interactions
         async def _log_all_incoming_updates(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             user = update.effective_user
             chat = update.effective_chat
@@ -176,6 +176,13 @@ class BotService:
                 text_preview,
                 cb_data,
             )
+
+            # Instantly indicate to the user that RUPIKA is active and preparing a response (..typing)
+            if chat and context.bot:
+                try:
+                    await context.bot.send_chat_action(chat_id=chat.id, action=ChatAction.TYPING)
+                except Exception as act_err:
+                    logger.debug("Tidak dapat mengirim typing chat action global: %s", act_err)
 
         app.add_handler(TypeHandler(Update, _log_all_incoming_updates), group=-1)
 
@@ -283,9 +290,9 @@ class BotService:
         app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_", block=False))
         app.add_handler(CallbackQueryHandler(_research_cb, pattern=r"^rsh:", block=False))
 
-        # Register fallback message handlers for unknown commands and plain text
+        # Register fallback message handlers for unknown commands and any incoming message
         app.add_handler(MessageHandler(filters.COMMAND, unknown_message_handler, block=False))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message_handler, block=False))
+        app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, unknown_message_handler, block=False))
 
         # Register global error handler with 409 Conflict detection
         async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -343,15 +350,16 @@ class BotService:
         self,
         drop_pending_updates: bool = False,
         bootstrap_retries: int = -1,
-        poll_interval: float = 0.0,
+        poll_interval: float = 0.5,
         timeout: int = 10,
     ) -> None:
         """Start long polling with graceful shutdown on conflict."""
         app = self.build_application()
         logger.info(
-            "Memulai Telegram bot polling (drop_pending_updates=%s, bootstrap_retries=%s, timeout=%ds)...",
+            "Memulai Telegram bot polling (drop_pending_updates=%s, bootstrap_retries=%s, poll_interval=%.1fs, timeout=%ds)...",
             drop_pending_updates,
             bootstrap_retries,
+            poll_interval,
             timeout,
         )
         app.run_polling(
@@ -359,6 +367,7 @@ class BotService:
             bootstrap_retries=bootstrap_retries,
             poll_interval=poll_interval,
             timeout=timeout,
+            close_loop=False,
         )
 
 
@@ -380,8 +389,8 @@ def start_bot(
             service = BotService(token=token)
             service.run_polling(drop_pending_updates=drop_pending_updates)
             if service.conflict_detected:
-                logger.warning("Bot mendeteksi konflik polling 409. Istirahat 5 detik sebelum menyambung kembali...")
-                time.sleep(5)
+                logger.warning("Bot mendeteksi konflik polling 409. Istirahat 10 detik agar koneksi lama Telegram kedaluwarsa...")
+                time.sleep(10)
                 continue
             logger.info("Polling Telegram selesai secara normal. Menyambung kembali polling dalam 1 detik...")
             time.sleep(1)
@@ -397,8 +406,8 @@ def start_bot(
             time.sleep(delay)
         except Exception as ex:
             if "conflict" in str(ex).lower():
-                logger.warning("Konflik 409 terdeteksi saat startup: %s. Menunggu 5 detik sebelum re-polling...", ex)
-                time.sleep(5)
+                logger.warning("Konflik 409 terdeteksi saat startup: %s. Menunggu 10 detik sebelum re-polling...", ex)
+                time.sleep(10)
                 continue
             logger.error("Galat tak terduga pada bot service: %s. Memulai ulang dalam 3 detik...", ex, exc_info=True)
             time.sleep(3)

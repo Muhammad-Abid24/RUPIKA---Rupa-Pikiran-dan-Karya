@@ -1,6 +1,7 @@
 """Telegram command handlers and menu keyboards for RUPIKA (SF-003)."""
 from __future__ import annotations
 
+import html
 import logging
 from pathlib import Path
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update
@@ -63,22 +64,31 @@ async def unknown_message_handler(update: Update, context: ContextTypes.DEFAULT_
     user = update.effective_user
     user_name = user.first_name if user else "Admin"
     user_id = user.id if user else "Unknown"
-    raw_text = (update.effective_message.text or "").strip()
+    raw_text = (update.effective_message.text or update.effective_message.caption or "").strip()
     logger.info("unknown_message_handler menerima: user=%s, text=%r", user_id, raw_text)
 
     if raw_text.startswith("/"):
         cmd = raw_text.split()[0]
         await update.effective_message.reply_text(
-            f"⚠️ Perintah `{cmd}` tidak dikenali.\n\n"
-            "Ketik /help untuk melihat menu perintah yang tersedia.",
-            parse_mode=ParseMode.MARKDOWN,
+            f"⚠️ Perintah <code>{html.escape(cmd)}</code> tidak dikenali.\n\n"
+            "Ketik <code>/help</code> atau gunakan menu di bawah untuk melihat daftar perintah yang tersedia.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=get_main_keyboard(),
+        )
+    elif raw_text:
+        await update.effective_message.reply_text(
+            f"👋 Halo, <b>{html.escape(user_name)}</b>!\n\n"
+            f"Pesan teks Anda: <i>\"{html.escape(raw_text[:100])}\"</i> telah diterima.\n\n"
+            "Silakan gunakan tombol menu di bawah atau ketik <code>/help</code> untuk panduan perintah operasional RUPIKA.",
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_keyboard(),
         )
     else:
         await update.effective_message.reply_text(
-            f"👋 Halo, **{user_name}**!\n\n"
-            "Perintah atau pesan teks Anda diterima. Silakan pilih menu di bawah atau ketik `/help` untuk panduan perintah.",
-            parse_mode=ParseMode.MARKDOWN,
+            f"👋 Halo, <b>{html.escape(user_name)}</b>!\n\n"
+            "Pesan atau lampiran Anda telah diterima.\n\n"
+            "Silakan gunakan tombol menu di bawah atau ketik <code>/help</code> untuk panduan perintah operasional RUPIKA.",
+            parse_mode=ParseMode.HTML,
             reply_markup=get_main_keyboard(),
         )
 
