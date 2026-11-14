@@ -76,7 +76,7 @@ class ResilientHTTPXRequest(HTTPXRequest):
                     or "timed out" in err_str
                 )
                 if is_transient and attempt < (max_transient_retries - 1):
-                    logger.info(
+                    logger.debug(
                         "Koneksi terganggu ke server Telegram (%s). Menyambung kembali otomatis (percobaan %d/%d)...",
                         err,
                         attempt + 1,
