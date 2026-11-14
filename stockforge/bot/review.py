@@ -458,9 +458,11 @@ class ReviewService:
         mp = (asset.width * asset.height) / 1_000_000.0 if (asset.width and asset.height) else 0.0
 
         if kw_list:
-            keywords_block = "\n".join(f"  {idx + 1}. {k}" for idx, k in enumerate(kw_list))
+            keywords_comma = ", ".join(kw_list)
+            keywords_numbered = "\n".join(f"  {idx + 1}. {k}" for idx, k in enumerate(kw_list))
         else:
-            keywords_block = "  (Belum ada keywords yang di-generate)"
+            keywords_comma = "  (Belum ada keywords yang di-generate)"
+            keywords_numbered = "  (Belum ada keywords yang di-generate)"
 
         if vision_issues:
             issues_block = "\n".join(f"  - {iss}" for iss in vision_issues)
@@ -490,8 +492,11 @@ class ReviewService:
             f"Tipe Konten     : {meta.content_type if meta else 'photo'}",
             f"Total Keywords  : {len(kw_list)}",
             "",
-            "Daftar Lengkap Keywords (Commercial Tags):",
-            keywords_block,
+            "Keywords / Tags (Comma-Separated):",
+            keywords_comma,
+            "",
+            "Daftar Lengkap Keywords (Numbered):",
+            keywords_numbered,
             "",
             "[3. HASIL QUALITY CONTROL (DETERMINISTIC)]",
             det_block,
