@@ -80,10 +80,23 @@ class HttpTextProvider(TextProvider):
                     headers=headers,
                 )
             except Exception as e:
+                err_str = str(e).lower()
+                if any(k in err_str for k in ["connect", "timeout", "remoteprotocol", "broken pipe", "connection reset"]):
+                    try:
+                        from stockforge.bot.alerts import gateway_alerts
+                        gateway_alerts.on_ai_gateway_disconnected(self.provider_name, self.base_url, str(e))
+                    except Exception:
+                        pass
                 logger.error("Connection error to %s: %s", self.provider_name, e)
                 raise RuntimeError(f"Connection error to {self.provider_name}: {e}") from e
 
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            try:
+                from stockforge.bot.alerts import gateway_alerts
+                gateway_alerts.on_ai_gateway_reconnected(self.provider_name, self.base_url)
+            except Exception:
+                pass
+        else:
             logger.error("Provider %s error HTTP %s: %s", self.provider_name, resp.status_code, resp.text[:200])
             classifier = ErrorClassifier()
             norm = classifier.classify(
@@ -187,10 +200,23 @@ class HttpImageProvider(ImageProvider):
                     headers=headers,
                 )
             except Exception as e:
+                err_str = str(e).lower()
+                if any(k in err_str for k in ["connect", "timeout", "remoteprotocol", "broken pipe", "connection reset"]):
+                    try:
+                        from stockforge.bot.alerts import gateway_alerts
+                        gateway_alerts.on_ai_gateway_disconnected(self.provider_name, self.base_url, str(e))
+                    except Exception:
+                        pass
                 logger.error("Connection error to %s: %s", self.provider_name, e)
                 raise RuntimeError(f"Connection error to {self.provider_name}: {e}") from e
 
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            try:
+                from stockforge.bot.alerts import gateway_alerts
+                gateway_alerts.on_ai_gateway_reconnected(self.provider_name, self.base_url)
+            except Exception:
+                pass
+        else:
             logger.error("Image Provider %s error HTTP %s: %s", self.provider_name, resp.status_code, resp.text[:200])
             classifier = ErrorClassifier()
             norm = classifier.classify(
@@ -334,10 +360,23 @@ class HttpVisionProvider(VisionProvider):
                     headers=headers,
                 )
             except Exception as e:
+                err_str = str(e).lower()
+                if any(k in err_str for k in ["connect", "timeout", "remoteprotocol", "broken pipe", "connection reset"]):
+                    try:
+                        from stockforge.bot.alerts import gateway_alerts
+                        gateway_alerts.on_ai_gateway_disconnected(self.provider_name, self.base_url, str(e))
+                    except Exception:
+                        pass
                 logger.error("Connection error to %s: %s", self.provider_name, e)
                 raise RuntimeError(f"Connection error to {self.provider_name}: {e}") from e
 
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            try:
+                from stockforge.bot.alerts import gateway_alerts
+                gateway_alerts.on_ai_gateway_reconnected(self.provider_name, self.base_url)
+            except Exception:
+                pass
+        else:
             logger.error("Vision Provider %s error HTTP %s: %s", self.provider_name, resp.status_code, resp.text[:200])
             classifier = ErrorClassifier()
             norm = classifier.classify(

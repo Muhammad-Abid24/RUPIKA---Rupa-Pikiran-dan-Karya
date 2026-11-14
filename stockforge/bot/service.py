@@ -23,6 +23,7 @@ from telegram.ext import (
 )
 from telegram.request import HTTPXRequest
 
+from stockforge.bot.alerts import gateway_alerts
 from stockforge.bot.handlers import (
     health_handler,
     help_handler,
@@ -147,11 +148,15 @@ class BotService:
             },
         )
 
+        async def _on_post_init(application: Application) -> None:
+            gateway_alerts.on_telegram_reconnected()
+
         app = (
             ApplicationBuilder()
             .token(self.token)
             .defaults(Defaults(block=False))
             .concurrent_updates(True)
+            .post_init(_on_post_init)
             .request(main_request)
             .get_updates_request(get_updates_request)
             .build()
@@ -176,6 +181,10 @@ class BotService:
                 text_preview,
                 cb_data,
             )
+
+            # If an update is successfully received, ensure reconnect state is published if previously severed
+            if gateway_alerts.tg_disconnected:
+                gateway_alerts.on_telegram_reconnected()
 
             # Instantly indicate to the user that RUPIKA is active and preparing a response (..typing)
             if chat and context.bot:
@@ -300,6 +309,7 @@ class BotService:
             err_str = str(err).lower() if err else ""
             if isinstance(err, Conflict) or "conflict" in err_str:
                 self.conflict_detected = True
+                gateway_alerts.on_telegram_disconnected("Konflik sesi polling Telegram aktif (HTTP 409 Conflict)")
                 logger.critical(
                     "Konflik polling Telegram terdeteksi (HTTP 409 Conflict): "
                     "instance bot lain sedang aktif. Menyegarkan koneksi polling..."
@@ -389,6 +399,7 @@ def start_bot(
             service = BotService(token=token)
             service.run_polling(drop_pending_updates=drop_pending_updates)
             if service.conflict_detected:
+                gateway_alerts.on_telegram_disconnected("Konflik sesi polling Telegram aktif (HTTP 409 Conflict)")
                 logger.warning("Bot mendeteksi konflik polling 409. Istirahat 10 detik agar koneksi lama Telegram kedaluwarsa...")
                 time.sleep(10)
                 continue
@@ -397,6 +408,7 @@ def start_bot(
         except (TimedOut, NetworkError, OSError) as net_err:
             attempt += 1
             delay = min(2 ** attempt, 15)
+            gateway_alerts.on_telegram_disconnected(f"Gangguan jaringan ke server Telegram ({net_err})")
             logger.warning(
                 "Koneksi polling Telegram terganggu (%s). Menyambung kembali dalam %d detik (percobaan #%d)...",
                 net_err,
@@ -406,9 +418,11 @@ def start_bot(
             time.sleep(delay)
         except Exception as ex:
             if "conflict" in str(ex).lower():
+                gateway_alerts.on_telegram_disconnected(f"Konflik sesi polling Telegram ({ex})")
                 logger.warning("Konflik 409 terdeteksi saat startup: %s. Menunggu 10 detik sebelum re-polling...", ex)
                 time.sleep(10)
                 continue
+            gateway_alerts.on_telegram_disconnected(f"Galat bot ({ex})")
             logger.error("Galat tak terduga pada bot service: %s. Memulai ulang dalam 3 detik...", ex, exc_info=True)
             time.sleep(3)
         finally:
