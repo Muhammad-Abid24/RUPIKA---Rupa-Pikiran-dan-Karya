@@ -148,48 +148,58 @@ async def jobs_command(
         "needs_reconciliation": "🔄",
     }
 
-    with session_factory() as session:
-        stmt = select(Job).order_by(Job.id.desc()).limit(10)
-        jobs = list(session.scalars(stmt).all())
-        if not jobs:
-            if update.effective_message:
-                await update.effective_message.reply_text(
-                    "📭 Belum ada antrean pekerjaan atau batch yang terdaftar.\n\n"
-                    "Gunakan /research untuk memulai riset dan produksi gambar baru."
+    try:
+        from sqlalchemy.orm import selectinload
+
+        with session_factory() as session:
+            stmt = select(Job).options(selectinload(Job.items)).order_by(Job.id.desc()).limit(10)
+            jobs = list(session.scalars(stmt).all())
+            if not jobs:
+                if update.effective_message:
+                    await update.effective_message.reply_text(
+                        "📭 Belum ada antrean pekerjaan atau batch yang terdaftar.\n\n"
+                        "Gunakan /research untuk memulai riset dan produksi gambar baru."
+                    )
+                return
+
+            active_count = sum(1 for j in jobs if j.status in ("running", "reserved", "pending"))
+
+            lines = [
+                "📋 <b>Daftar Pekerjaan & Antrean Batch</b>",
+                f"<i>Menampilkan {len(jobs)} batch terakhir ({active_count} aktif)</i>\n",
+            ]
+
+            for j in jobs:
+                icon = STATUS_ICONS.get(j.status, "📦")
+                created_str = j.created_at.strftime("%Y-%m-%d %H:%M") if j.created_at else "-"
+                total_items = len(j.items) if j.items else 1
+                completed_items = sum(1 for it in j.items if it.status == "completed") if j.items else (1 if j.status == "completed" else 0)
+                failed_items = sum(1 for it in j.items if it.status == "failed") if j.items else (1 if j.status == "failed" else 0)
+
+                line = (
+                    f"{icon} <b>Batch #{j.id}</b> (<code>{html.escape(j.type)}</code>)\n"
+                    f"   └ Status: <code>{html.escape(j.status.upper())}</code> | "
+                    f"Item: {completed_items}/{total_items} sukses"
                 )
-            return
+                if failed_items > 0:
+                    line += f" ({failed_items} gagal)"
+                line += f" | {created_str}"
+                lines.append(line)
 
-        active_count = sum(1 for j in jobs if j.status in ("running", "reserved", "pending"))
-
-        lines = [
-            "📋 <b>Daftar Pekerjaan & Antrean Batch</b>",
-            f"<i>Menampilkan {len(jobs)} batch terakhir ({active_count} aktif)</i>\n",
-        ]
-
-        for j in jobs:
-            icon = STATUS_ICONS.get(j.status, "📦")
-            created_str = j.created_at.strftime("%Y-%m-%d %H:%M") if j.created_at else "-"
-            total_items = len(j.items) if j.items else 1
-            completed_items = sum(1 for it in j.items if it.status == "completed") if j.items else (1 if j.status == "completed" else 0)
-            failed_items = sum(1 for it in j.items if it.status == "failed") if j.items else (1 if j.status == "failed" else 0)
-
-            line = (
-                f"{icon} <b>Batch #{j.id}</b> (<code>{html.escape(j.type)}</code>)\n"
-                f"   └ Status: <code>{html.escape(j.status.upper())}</code> | "
-                f"Item: {completed_items}/{total_items} sukses"
+            lines.append(
+                "\n💡 <i>Gunakan <code>/status &lt;id&gt;</code> untuk memantau kemajuan batch atau <code>/review &lt;id&gt;</code> untuk meninjau aset.</i>"
             )
-            if failed_items > 0:
-                line += f" ({failed_items} gagal)"
-            line += f" | {created_str}"
-            lines.append(line)
+            text = "\n".join(lines)
 
-        lines.append(
-            "\n💡 <i>Gunakan <code>/status &lt;id&gt;</code> untuk memantau kemajuan batch atau <code>/review &lt;id&gt;</code> untuk meninjau aset.</i>"
-        )
-        text = "\n".join(lines)
-
-    if update.effective_message:
-        await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+        if update.effective_message:
+            await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+    except Exception as ex:
+        logger.error("Terjadi galat pada jobs_command: %s", ex, exc_info=True)
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                f"❌ <b>Gagal mengambil daftar antrean (/jobs):</b>\n<code>{html.escape(str(ex))}</code>",
+                parse_mode=ParseMode.HTML,
+            )
 
 
 @require_admin

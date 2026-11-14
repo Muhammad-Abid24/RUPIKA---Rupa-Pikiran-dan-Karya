@@ -63,22 +63,35 @@ async def research_command(
         except Exception:
             pass
 
-    with session_factory() as session:
-        user_db_id = _get_admin_db_user_id(session, user_tg_id)
+    status_msg = None
+    if update.effective_message:
+        try:
+            status_msg = await update.effective_message.reply_text(
+                f"🔍 <b>Sedang melakukan riset pasar untuk:</b> <code>{html.escape(topic)}</code>\n\n"
+                "<i>Menghubungkan ke model AI, mohon tunggu sebentar (estimasi 15–45 detik)...</i>",
+                parse_mode=ParseMode.HTML,
+            )
+        except Exception as ex:
+            logger.debug("Tidak dapat mengirim status_msg awal: %s", ex)
 
-        # 1. Create ResearchRun
-        run = ResearchRun(
-            trigger="manual",
-            topic=topic,
-            status="awaiting_niche_selection",
-            created_by=user_db_id,
-            started_at=utc_now(),
-        )
-        session.add(run)
-        session.commit()
-        session.refresh(run)
+    try:
+        with session_factory() as session:
+            user_db_id = _get_admin_db_user_id(session, user_tg_id)
+
+            # 1. Create ResearchRun
+            run = ResearchRun(
+                trigger="manual",
+                topic=topic,
+                status="awaiting_niche_selection",
+                created_by=user_db_id,
+                started_at=utc_now(),
+            )
+            session.add(run)
+            session.commit()
+            run_id = run.id
 
         # 2. Generate distinct candidates with explicit source provenance via AI router or fallback
+        # Note: Executed outside DB session block to avoid locking SQLite during external HTTP call
         candidates_data = []
         error_msg: Optional[str] = None
         if router is not None:
@@ -100,20 +113,30 @@ async def research_command(
                     })
             except Exception as ex:
                 error_msg = str(ex)
-                logger.error("Gagal melakukan riset via AI router: %s", ex)
+                logger.error("Gagal melakukan riset via AI router: %s", ex, exc_info=True)
 
         # Invariant: Never display fake dummy data if live AI router fails
         if router is not None and not candidates_data:
-            run.status = "failed"
-            session.commit()
+            with session_factory() as session:
+                r_run = session.get(ResearchRun, run_id)
+                if r_run:
+                    r_run.status = "failed"
+                    session.commit()
+
+            fail_text = (
+                f"❌ <b>Riset Pasar Gagal</b>\n\n"
+                f"Model AI tidak dapat menyelesaikan riset untuk topik <b>{html.escape(topic)}</b>.\n"
+                f"<b>Detail Galat:</b> <code>{html.escape(error_msg or 'Format respon AI tidak valid')}</code>\n\n"
+                f"<i>Sistem RUPIKA tidak menampilkan data dummy tiruan. Silakan ulangi perintah atau ganti topik.</i>"
+            )
+            if status_msg:
+                try:
+                    await status_msg.edit_text(fail_text, parse_mode=ParseMode.HTML)
+                    return
+                except Exception:
+                    pass
             if update.effective_message:
-                await update.effective_message.reply_text(
-                    f"❌ <b>Riset Pasar Gagal</b>\n\n"
-                    f"Model AI tidak dapat menyelesaikan riset untuk topik <b>{html.escape(topic)}</b>.\n"
-                    f"<b>Detail Galat:</b> <code>{html.escape(error_msg or 'Format respon AI tidak valid')}</code>\n\n"
-                    f"<i>Sistem RUPIKA tidak menampilkan data dummy tiruan. Silakan ulangi perintah atau ganti topik.</i>",
-                    parse_mode=ParseMode.HTML,
-                )
+                await update.effective_message.reply_text(fail_text, parse_mode=ParseMode.HTML)
             return
 
         # Fallback only for unit tests where router is intentionally omitted
@@ -133,52 +156,84 @@ async def research_command(
                 },
             ]
 
-        cand_records: List[ResearchCandidate] = []
-        for c in candidates_data:
-            rec = ResearchCandidate(
-                research_run_id=run.id,
-                niche_name=c["niche_name"],
-                rationale=c["rationale"],
-                evidence_quality=c["evidence_quality"],
-                sources_json=json.dumps(c["sources"]),
-                status="proposed",
+        candidates_view = []
+        with session_factory() as session:
+            for c in candidates_data:
+                rec = ResearchCandidate(
+                    research_run_id=run_id,
+                    niche_name=c["niche_name"],
+                    rationale=c["rationale"],
+                    evidence_quality=c["evidence_quality"],
+                    sources_json=json.dumps(c["sources"]),
+                    status="proposed",
+                )
+                session.add(rec)
+            session.commit()
+
+            cands = session.scalars(
+                select(ResearchCandidate).where(ResearchCandidate.research_run_id == run_id)
+            ).all()
+            for r in cands:
+                candidates_view.append({
+                    "id": r.id,
+                    "niche_name": r.niche_name,
+                    "rationale": r.rationale,
+                    "evidence_quality": r.evidence_quality,
+                })
+
+        # Build digest message and selection buttons
+        lines = [
+            f"🔍 <b>Hasil Riset Niche: {html.escape(topic)}</b> (Sesi #{run_id})\n",
+            "Pilih niche yang ingin Anda masukkan ke dalam rencana produksi:",
+        ]
+
+        keyboard = []
+        for c in candidates_view:
+            src_note = f"<i>(Sumber: {c['evidence_quality']})</i>"
+            lines.append(
+                f"\n• <b>{html.escape(c['niche_name'])}</b> {src_note}\n"
+                f"  └ {html.escape(c['rationale'])}"
             )
-            session.add(rec)
-            cand_records.append(rec)
-        session.commit()
-        for r in cand_records:
-            session.refresh(r)
+            keyboard.append([
+                InlineKeyboardButton(f"⬜ Pilih: {c['niche_name'][:24]}", callback_data=f"rsh:sel:{run_id}:{c['id']}")
+            ])
 
-    # Build digest message and selection buttons
-    lines = [
-        f"🔍 <b>Hasil Riset Niche: {html.escape(topic)}</b> (Sesi #{run.id})\n",
-        "Pilih niche yang ingin Anda masukkan ke dalam rencana produksi:",
-    ]
-
-    keyboard = []
-    for c in cand_records:
-        src_note = f"<i>(Sumber: {c.evidence_quality})</i>"
-        lines.append(
-            f"\n• <b>{html.escape(c.niche_name)}</b> {src_note}\n"
-            f"  └ {html.escape(c.rationale)}"
-        )
         keyboard.append([
-            InlineKeyboardButton(f"⬜ Pilih: {c.niche_name[:24]}", callback_data=f"rsh:sel:{run.id}:{c.id}")
+            InlineKeyboardButton("📋 Tinjau Rencana Produksi", callback_data=f"rsh:review:{run_id}"),
+            InlineKeyboardButton("❌ Batal", callback_data=f"rsh:reject:{run_id}"),
         ])
 
-    keyboard.append([
-        InlineKeyboardButton("📋 Tinjau Rencana Produksi", callback_data=f"rsh:review:{run.id}"),
-        InlineKeyboardButton("❌ Batal", callback_data=f"rsh:reject:{run.id}"),
-    ])
+        lines.append("\n⚠️ <i>Catatan: Memilih niche TIDAK otomatis memulai pembuatan gambar (Select ≠ Approve).</i>")
 
-    lines.append("\n⚠️ <i>Catatan: Memilih niche TIDAK otomatis memulai pembuatan gambar (Select ≠ Approve).</i>")
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
 
-    if update.effective_message:
-        await update.effective_message.reply_text(
-            "\n".join(lines),
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(keyboard),
+        if update.effective_message:
+            await update.effective_message.reply_text(
+                "\n".join(lines),
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+
+    except Exception as ex:
+        logger.error("Terjadi galat tak terduga pada research_command: %s", ex, exc_info=True)
+        fail_text = (
+            f"❌ <b>Terjadi Kesalahan pada Perintah /research</b>\n\n"
+            f"Topik: <b>{html.escape(topic)}</b>\n"
+            f"<b>Detail Galat:</b> <code>{html.escape(str(ex))}</code>\n\n"
+            f"<i>Silakan coba lagi beberapa saat lagi.</i>"
         )
+        if status_msg:
+            try:
+                await status_msg.edit_text(fail_text, parse_mode=ParseMode.HTML)
+                return
+            except Exception:
+                pass
+        if update.effective_message:
+            await update.effective_message.reply_text(fail_text, parse_mode=ParseMode.HTML)
 
 
 @require_admin

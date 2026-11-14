@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import socket
 from typing import Any, Optional, Tuple
 import httpx
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.error import Conflict, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
@@ -14,6 +16,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
+    Defaults,
     MessageHandler,
     TypeHandler,
     filters,
@@ -147,6 +150,7 @@ class BotService:
         app = (
             ApplicationBuilder()
             .token(self.token)
+            .defaults(Defaults(block=False))
             .concurrent_updates(True)
             .request(main_request)
             .get_updates_request(get_updates_request)
@@ -175,11 +179,11 @@ class BotService:
 
         app.add_handler(TypeHandler(Update, _log_all_incoming_updates), group=-1)
 
-        # Register command handlers
-        app.add_handler(CommandHandler("start", start_handler))
-        app.add_handler(CommandHandler("help", help_handler))
-        app.add_handler(CommandHandler("health", health_handler))
-        app.add_handler(CommandHandler("review", review_command_handler))
+        # Register command handlers (non-blocking so slow calls never freeze concurrent commands)
+        app.add_handler(CommandHandler("start", start_handler, block=False))
+        app.add_handler(CommandHandler("help", help_handler, block=False))
+        app.add_handler(CommandHandler("health", health_handler, block=False))
+        app.add_handler(CommandHandler("review", review_command_handler, block=False))
 
         from stockforge.bot.progress_handlers import (
             failed_command,
@@ -264,24 +268,24 @@ class BotService:
         async def _settings_cmd(u, c):
             await settings_command(u, c, session_factory=get_sf())
 
-        app.add_handler(CommandHandler("status", _status_handler))
-        app.add_handler(CommandHandler("jobs", _jobs_handler))
-        app.add_handler(CommandHandler("failed", _failed_handler))
-        app.add_handler(CommandHandler("retry", _retry_handler))
-        app.add_handler(CommandHandler("providers", _providers_handler))
-        app.add_handler(CommandHandler("research", _research_cmd))
-        app.add_handler(CommandHandler("researchmode", _researchmode_cmd))
-        app.add_handler(CommandHandler("researchhistory", _researchhistory_cmd))
-        app.add_handler(CommandHandler("settings", _settings_cmd))
+        app.add_handler(CommandHandler("status", _status_handler, block=False))
+        app.add_handler(CommandHandler("jobs", _jobs_handler, block=False))
+        app.add_handler(CommandHandler("failed", _failed_handler, block=False))
+        app.add_handler(CommandHandler("retry", _retry_handler, block=False))
+        app.add_handler(CommandHandler("providers", _providers_handler, block=False))
+        app.add_handler(CommandHandler("research", _research_cmd, block=False))
+        app.add_handler(CommandHandler("researchmode", _researchmode_cmd, block=False))
+        app.add_handler(CommandHandler("researchhistory", _researchhistory_cmd, block=False))
+        app.add_handler(CommandHandler("settings", _settings_cmd, block=False))
 
         # Register callback query handlers
-        app.add_handler(CallbackQueryHandler(review_callback_handler, pattern=r"^rev:"))
-        app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_"))
-        app.add_handler(CallbackQueryHandler(_research_cb, pattern=r"^rsh:"))
+        app.add_handler(CallbackQueryHandler(review_callback_handler, pattern=r"^rev:", block=False))
+        app.add_handler(CallbackQueryHandler(_retry_cb, pattern=r"^retry_", block=False))
+        app.add_handler(CallbackQueryHandler(_research_cb, pattern=r"^rsh:", block=False))
 
         # Register fallback message handlers for unknown commands and plain text
-        app.add_handler(MessageHandler(filters.COMMAND, unknown_message_handler))
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message_handler))
+        app.add_handler(MessageHandler(filters.COMMAND, unknown_message_handler, block=False))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown_message_handler, block=False))
 
         # Register global error handler with 409 Conflict detection
         async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -322,8 +326,12 @@ class BotService:
             from telegram import Update
             if update and isinstance(update, Update) and update.effective_message:
                 try:
+                    err_hint = html.escape(str(err)[:180]) if err else "Terjadi kendala internal"
                     await update.effective_message.reply_text(
-                        "⚠️ Terjadi kendala saat memproses permintaan Anda. Silakan coba beberapa saat lagi."
+                        f"⚠️ <b>Terjadi kendala saat memproses permintaan:</b>\n\n"
+                        f"<code>{err_hint}</code>\n\n"
+                        f"<i>Silakan coba beberapa saat lagi.</i>",
+                        parse_mode=ParseMode.HTML,
                     )
                 except Exception as reply_err:
                     logger.debug("Tidak dapat mengirim pesan error fallback ke user: %s", reply_err)
