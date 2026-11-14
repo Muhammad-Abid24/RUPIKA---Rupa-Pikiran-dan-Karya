@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 from pydantic import BaseModel, Field
 
 from stockforge.providers.base import (

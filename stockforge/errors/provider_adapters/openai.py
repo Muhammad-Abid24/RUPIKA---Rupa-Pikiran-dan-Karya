@@ -113,7 +113,7 @@ class OpenAIErrorAdapter(BaseProviderErrorAdapter):
             code = ErrorCode.UNKNOWN_PROVIDER_ERROR
             user_msg = f"Unknown OpenAI error: {sanitize_sensitive_details(raw_msg)[:150]}"
 
-        defaults = ERROR_CODE_DEFAULTS.get(code, ERROR_CODE_DEFAULTS[ErrorCode.UNKNOWN_PROVIDER_ERROR])
+        defaults = ERROR_CODE_DEFAULTS.get(code) or ERROR_CODE_DEFAULTS[ErrorCode.UNKNOWN_PROVIDER_ERROR]
 
         return NormalizedProviderError(
             code=code,

@@ -35,7 +35,7 @@ class ResearchResult:
 
     def __init__(
         self,
-        niche: Niche,
+        niche: Optional[Niche],
         concepts: List[Concept],
         flagged_duplicates: List[Dict[str, Any]],
         unverified_count: int,

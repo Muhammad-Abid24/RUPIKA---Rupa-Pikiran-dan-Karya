@@ -10,10 +10,10 @@ from stockforge.errors.codes import (
 )
 
 
-def sanitize_sensitive_details(text: Optional[str]) -> Optional[str]:
+def sanitize_sensitive_details(text: Optional[str]) -> str:
     """Redact API keys, tokens, authorization headers, and secrets from error strings."""
     if not text:
-        return None
+        return ""
     s = str(text)
     # Mask Bearer tokens
     s = re.sub(r"(Bearer\s+)([A-Za-z0-9_\-\.]+)", r"\1***REDACTED***", s, flags=re.IGNORECASE)

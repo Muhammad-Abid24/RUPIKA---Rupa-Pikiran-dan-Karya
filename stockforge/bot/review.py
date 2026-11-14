@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
 from PIL import Image
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ChatAction, ParseMode
 from telegram.ext import ContextTypes
 from sqlalchemy import select
@@ -53,10 +53,12 @@ class ReviewService:
         if self.queue_service is not None:
             return self.queue_service
         try:
+            from sqlalchemy.engine import Engine
             bind = session.get_bind()
-            if bind:
+            engine_obj = bind if isinstance(bind, Engine) else getattr(bind, "engine", None)
+            if engine_obj and isinstance(engine_obj, Engine):
                 from stockforge.queue.service import QueueService
-                self.queue_service = QueueService(engine=bind)
+                self.queue_service = QueueService(engine=engine_obj)
                 return self.queue_service
         except Exception as ex:
             logger.warning("Tidak dapat menginisialisasi QueueService otomatis: %s", ex)
@@ -711,16 +713,15 @@ def get_review_service(
     queue_service: Optional[Any] = None,
 ) -> ReviewService:
     global _default_review_service
-    if session_factory is not None or queue_service is not None:
-        _default_review_service = ReviewService(session_factory=session_factory, queue_service=queue_service)
-    elif _default_review_service is None:
-        from stockforge.config import get_settings
-        from stockforge.db.session import create_db_engine, create_session_factory
-        from stockforge.queue.service import QueueService
+    from stockforge.config import get_settings
+    from stockforge.db.session import create_db_engine, create_session_factory
+    from stockforge.queue.service import QueueService
+
+    if _default_review_service is None or session_factory is not None or queue_service is not None:
         settings = get_settings()
         engine = create_db_engine(settings.database_url)
-        sf = create_session_factory(engine)
-        qs = QueueService(engine=engine)
+        sf = session_factory if session_factory is not None else create_session_factory(engine)
+        qs = queue_service if queue_service is not None else QueueService(engine=engine)
         _default_review_service = ReviewService(session_factory=sf, queue_service=qs)
     return _default_review_service
 
@@ -768,6 +769,10 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                 await update.effective_message.reply_text(msg, parse_mode=ParseMode.HTML)
             return
 
+        effective_msg = update.effective_message
+        if not effective_msg:
+            return
+
         token = service.generate_token(asset.id)
         txt_content, is_lengthy = service.build_metadata_export_txt(asset)
         summary_text, markup = service.build_review_message_and_keyboard(
@@ -801,7 +806,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
 
             try:
                 if preview_bio:
-                    await update.effective_message.reply_photo(
+                    await effective_msg.reply_photo(
                         photo=preview_bio,
                         caption=summary_text,
                         parse_mode=ParseMode.HTML,
@@ -809,7 +814,7 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                     )
                 else:
                     with open(image_file, "rb") as f:
-                        await update.effective_message.reply_photo(
+                        await effective_msg.reply_photo(
                             photo=f,
                             caption=summary_text,
                             parse_mode=ParseMode.HTML,
@@ -822,50 +827,49 @@ async def review_command_handler(update: Update, context: ContextTypes.DEFAULT_T
                     short_caption = f"🖼️ <b>Review Aset Stok #{asset.id}</b> (<code>{html.escape(asset.filename or '')}</code>)"
                     if preview_bio:
                         preview_bio.seek(0)
-                        await update.effective_message.reply_photo(
+                        await effective_msg.reply_photo(
                             photo=preview_bio,
                             caption=short_caption,
                             parse_mode=ParseMode.HTML,
                         )
                     else:
                         with open(image_file, "rb") as f:
-                            await update.effective_message.reply_photo(
+                            await effective_msg.reply_photo(
                                 photo=f,
                                 caption=short_caption,
                                 parse_mode=ParseMode.HTML,
                             )
-                    if update.effective_message:
-                        await update.effective_message.reply_text(
-                            summary_text,
-                            parse_mode=ParseMode.HTML,
-                            reply_markup=markup,
-                        )
+                    await effective_msg.reply_text(
+                        summary_text,
+                        parse_mode=ParseMode.HTML,
+                        reply_markup=markup,
+                    )
                     photo_sent = True
                 except Exception as e2:
                     logger.error("Gagal mengirim preview foto fallback: %s. Mengirim teks biasa.", e2)
 
         # Fallback jika file fisik tidak ada atau terjadi kendala media total
-        if not photo_sent and update.effective_message:
+        if not photo_sent:
             try:
-                await update.effective_message.reply_text(
+                await effective_msg.reply_text(
                     summary_text,
                     parse_mode=ParseMode.HTML,
                     reply_markup=markup,
                 )
             except Exception as e:
                 logger.error("Gagal mengirim pesan review dengan HTML: %s. Mengirim teks polos.", e)
-                await update.effective_message.reply_text(
+                await effective_msg.reply_text(
                     summary_text,
                     reply_markup=markup,
                 )
 
         # Jika metadata terlalu panjang, ekspor sisanya / lengkap dalam bentuk file .txt
-        if is_lengthy and update.effective_message:
+        if is_lengthy:
             try:
                 bio = io.BytesIO(txt_content.encode("utf-8"))
                 bio.name = f"metadata_asset_{asset.id}.txt"
                 caption_doc = f"📄 Metadata lengkap & sisa keywords untuk Aset #{asset.id} (.txt)"
-                await update.effective_message.reply_document(
+                await effective_msg.reply_document(
                     document=bio,
                     filename=f"metadata_asset_{asset.id}.txt",
                     caption=caption_doc,
@@ -929,6 +933,10 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
     user_id = user.id if user else 0
     user_name = user.first_name if user else "Admin"
 
+    msg = query.message
+    if not isinstance(msg, Message):
+        return
+
     # 2. Full-resolution image request
     if action == "res":
         asset = service.get_pending_asset(asset_id=asset_id)
@@ -939,14 +947,14 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         await query.answer("Mengirimkan file gambar resolusi penuh...")
         try:
             with open(asset.raw_path, "rb") as f:
-                await query.message.reply_document(
+                await msg.reply_document(
                     document=f,
                     filename=asset.filename,
                     caption=f"File resolusi penuh untuk Aset #{asset.id} ({asset.width}x{asset.height} px)",
                 )
         except Exception as e:
             logger.error("Gagal mengirim dokumen full-res: %s", e)
-            await query.message.reply_text(f"Gagal mengirim file full-res: {e}")
+            await msg.reply_text(f"Gagal mengirim file full-res: {e}")
         return
 
     # 3. Process review decision (approve, reject, regenerate)
@@ -984,9 +992,9 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
 
     try:
         # If it's a photo caption
-        if query.message.caption:
-            caption_html = getattr(query.message, "caption_html", None)
-            base_caption = caption_html if isinstance(caption_html, str) else html.escape(query.message.caption or "")
+        if msg.caption:
+            caption_html = getattr(msg, "caption_html", None)
+            base_caption = caption_html if isinstance(caption_html, str) else html.escape(msg.caption or "")
             await query.edit_message_caption(
                 caption=base_caption + summary_note,
                 parse_mode=ParseMode.HTML,
@@ -994,8 +1002,8 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
             )
         else:
             # If it's a text message
-            text_html = getattr(query.message, "text_html", None)
-            base_text = text_html if isinstance(text_html, str) else html.escape(query.message.text or "")
+            text_html = getattr(msg, "text_html", None)
+            base_text = text_html if isinstance(text_html, str) else html.escape(msg.text or "")
             await query.edit_message_text(
                 text=base_text + summary_note,
                 parse_mode=ParseMode.HTML,
@@ -1005,7 +1013,7 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
         logger.warning("Gagal mengedit pesan review: %s", e)
 
     # Kirim konfirmasi detail jika regenerasi berhasil di-enqueue
-    if res.decision == "regenerate" and res.new_job_id and query.message:
+    if res.decision == "regenerate" and res.new_job_id:
         try:
             regen_text = (
                 f"🔄 <b>Proses Regenerasi Dimulai untuk Aset #{asset_id}</b>\n\n"
@@ -1013,7 +1021,7 @@ async def review_callback_handler(update: Update, context: ContextTypes.DEFAULT_
                 f"• <b>Status:</b> Antrean produksi gambar baru\n\n"
                 f"💡 <i>Gunakan perintah <code>/status {res.new_job_id}</code> untuk memantau kemajuan atau tunggu notifikasi saat gambar selesai dibuat.</i>"
             )
-            await query.message.reply_text(regen_text, parse_mode=ParseMode.HTML)
+            await msg.reply_text(regen_text, parse_mode=ParseMode.HTML)
         except Exception as rx:
             logger.warning("Gagal mengirim pesan konfirmasi regenerasi: %s", rx)
 

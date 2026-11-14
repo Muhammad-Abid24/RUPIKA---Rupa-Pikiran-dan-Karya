@@ -67,7 +67,7 @@ def require_admin(
                 chat.type if chat else "unknown",
                 user.id if user else "unknown",
             )
-            if is_callback:
+            if is_callback and update.callback_query:
                 try:
                     await update.callback_query.answer(GROUP_CHAT_REJECT_MESSAGE, show_alert=True)
                 except Exception:
@@ -83,7 +83,7 @@ def require_admin(
         user_id = user.id if user else None
         if not is_authorized_user(user_id):
             logger.warning("Percobaan akses tidak terotorisasi: user_id=%s", user_id)
-            if is_callback:
+            if is_callback and update.callback_query:
                 try:
                     await update.callback_query.answer(DENIED_GENERIC_MESSAGE, show_alert=True)
                 except Exception:

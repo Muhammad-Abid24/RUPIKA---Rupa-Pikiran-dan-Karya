@@ -242,9 +242,11 @@ async def research_callback_handler(
             ).count()
 
         # Update inline keyboard button checkmarks
-        if query.message and query.message.reply_markup:
+        msg = query.message
+        reply_markup = getattr(msg, "reply_markup", None)
+        if msg and reply_markup and hasattr(reply_markup, "inline_keyboard"):
             new_rows = []
-            for row in query.message.reply_markup.inline_keyboard:
+            for row in reply_markup.inline_keyboard:
                 new_row = []
                 for btn in row:
                     if btn.callback_data == data:

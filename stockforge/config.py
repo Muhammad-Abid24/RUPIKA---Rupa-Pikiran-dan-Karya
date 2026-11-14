@@ -108,6 +108,15 @@ class Settings(BaseSettings):
         """Resolve path to data directory."""
         return Path(self.data_dir).resolve()
 
+    @property
+    def resolved_database_path(self) -> Path:
+        """Resolve filesystem path for SQLite database."""
+        db_url = self.database_url
+        if db_url.startswith("sqlite:///"):
+            path_str = db_url.replace("sqlite:///", "")
+            return Path(path_str).resolve()
+        return (self.resolved_data_dir / "stockforge.db").resolve()
+
 
 def get_settings() -> Settings:
     """Instantiate and return settings singleton/instance."""

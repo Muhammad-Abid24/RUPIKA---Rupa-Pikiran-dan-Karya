@@ -34,15 +34,20 @@ logger = logging.getLogger("stockforge.bot.service")
 
 def _build_tcp_keepalive_socket_options() -> list[Tuple[int, int, int]]:
     """Configure TCP Keepalive socket options to keep long-polling connections persistently active."""
-    options = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
-    if hasattr(socket, "TCP_KEEPIDLE"):
-        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 15))
-    elif hasattr(socket, "TCP_KEEPALIVE"):
-        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPALIVE, 15))
-    if hasattr(socket, "TCP_KEEPINTVL"):
-        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 5))
-    if hasattr(socket, "TCP_KEEPCNT"):
-        options.append((socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3))
+    options: list[Tuple[int, int, int]] = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+    tcp_keepidle = getattr(socket, "TCP_KEEPIDLE", None)
+    tcp_keepalive = getattr(socket, "TCP_KEEPALIVE", None)
+    tcp_keepintvl = getattr(socket, "TCP_KEEPINTVL", None)
+    tcp_keepcnt = getattr(socket, "TCP_KEEPCNT", None)
+
+    if tcp_keepidle is not None:
+        options.append((socket.IPPROTO_TCP, tcp_keepidle, 15))
+    elif tcp_keepalive is not None:
+        options.append((socket.IPPROTO_TCP, tcp_keepalive, 15))
+    if tcp_keepintvl is not None:
+        options.append((socket.IPPROTO_TCP, tcp_keepintvl, 5))
+    if tcp_keepcnt is not None:
+        options.append((socket.IPPROTO_TCP, tcp_keepcnt, 3))
     return options
 
 
@@ -80,6 +85,7 @@ class ResilientHTTPXRequest(HTTPXRequest):
                     await asyncio.sleep(0.3 * (attempt + 1))
                     continue
                 raise
+        return await super().do_request(*args, **kwargs)
 
 
 class BotService:
@@ -207,6 +213,8 @@ class BotService:
             return QueueService(engine=create_db_engine(get_settings().database_url))
 
         def get_router():
+            import os
+            from pathlib import Path
             config_dir = Path(os.environ.get("CONFIG_DIR", "config"))
             for cfg_candidate in [config_dir / "models.yaml", Path("config/models.yaml"), Path("/app/config/models.yaml")]:
                 if cfg_candidate.exists():

@@ -61,15 +61,17 @@ class ErrorClassifier:
                 status = getattr(exception, "status_code", None) or getattr(exception, "status", None)
             
             # Check for headers
-            if req_headers is None and hasattr(exception, "headers") and isinstance(exception.headers, dict):
-                req_headers = dict(exception.headers)
+            exc_headers = getattr(exception, "headers", None)
+            if req_headers is None and isinstance(exc_headers, dict):
+                req_headers = dict(exc_headers)
 
             # Check for response body or message
             if content_body is None:
-                if hasattr(exception, "response") and hasattr(exception.response, "text"):
-                    content_body = exception.response.text
+                resp_obj = getattr(exception, "response", None)
+                if resp_obj is not None and hasattr(resp_obj, "text"):
+                    content_body = getattr(resp_obj, "text", "")
                 elif hasattr(exception, "body"):
-                    content_body = exception.body
+                    content_body = getattr(exception, "body", "")
                 else:
                     content_body = str(exception)
 

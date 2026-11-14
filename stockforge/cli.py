@@ -341,7 +341,8 @@ def research_generate(
         console.print(f"[bold red]Gagal melakukan riset konsep:[/bold red] {e}")
         raise typer.Exit(code=1)
 
-    table = Table(title=f"Konsep Stok Komersial — Niche: {result.niche.name}", show_header=True)
+    niche_title = result.niche.name if result.niche else niche
+    table = Table(title=f"Konsep Stok Komersial — Niche: {niche_title}", show_header=True)
     table.add_column("ID", style="cyan", width=6)
     table.add_column("Judul", style="bold")
     table.add_column("Fingerprint", style="dim", width=12)
@@ -537,10 +538,10 @@ def ops_cycle(
 
     settings = get_settings()
     session_factory = create_session_factory(create_db_engine(settings.database_url))
-    storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
+    storage_service = StorageService(base_data_dir=settings.resolved_data_dir)
 
     db_path = settings.resolved_database_path
-    backup_dir = settings.resolved_data_dir() / "backups"
+    backup_dir = settings.resolved_data_dir / "backups"
 
     scheduler = MaintenanceScheduler(
         session_factory=session_factory,
@@ -569,7 +570,7 @@ def ops_backup() -> None:
 
     settings = get_settings()
     db_path = settings.resolved_database_path
-    backup_dir = settings.resolved_data_dir() / "backups"
+    backup_dir = settings.resolved_data_dir / "backups"
 
     console.print(f"[bold cyan]Membuat backup online dari database:[/bold cyan] {db_path}")
     try:
@@ -589,7 +590,7 @@ def ops_health() -> None:
 
     settings = get_settings()
     session_factory = create_session_factory(create_db_engine(settings.database_url))
-    storage_service = StorageService(base_data_dir=settings.resolved_data_dir())
+    storage_service = StorageService(base_data_dir=settings.resolved_data_dir)
 
     disk = check_disk_space(storage_service.base_data_dir)
     queue = check_queue_health(session_factory)
